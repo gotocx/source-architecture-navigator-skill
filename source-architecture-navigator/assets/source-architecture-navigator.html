@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Source Architecture Navigator</title>
+  <style>
+    :root {
+      --paper: #f7f3ea;
+      --ink: #171717;
+      --muted: #68645e;
+      --line: #d8d0c2;
+      --panel: #fffaf0;
+      --panel-2: #ebe4d6;
+      --red: #c74231;
+      --blue: #246b86;
+      --green: #47725b;
+      --amber: #b16d22;
+      --black: #111;
+      --shadow: 0 18px 45px rgba(28, 24, 18, .12);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(90deg, rgba(23, 23, 23, .035) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(23, 23, 23, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      color: var(--ink);
+      font-family: "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+
+    header {
+      min-height: 88vh;
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) minmax(320px, 520px);
+      gap: 44px;
+      align-items: center;
+      padding: 56px min(6vw, 76px) 42px;
+      border-bottom: 2px solid var(--ink);
+      background:
+        radial-gradient(circle at 8% 20%, rgba(199, 66, 49, .16), transparent 24%),
+        linear-gradient(135deg, rgba(255,255,255,.72), rgba(235,228,214,.8));
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      border: 1px solid var(--ink);
+      background: var(--panel);
+      font-size: 13px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .pin {
+      width: 9px;
+      height: 9px;
+      background: var(--red);
+      border-radius: 50%;
+      box-shadow: 0 0 0 4px rgba(199, 66, 49, .16);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin-top: 22px;
+      max-width: 860px;
+      font-family: Georgia, "Microsoft YaHei", serif;
+      font-size: clamp(44px, 6vw, 92px);
+      font-weight: 700;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 22px 0 0;
+      font-size: clamp(18px, 2vw, 24px);
+      color: #35312b;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .button {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border: 2px solid var(--ink);
+      background: var(--ink);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+      border-radius: 6px;
+      box-shadow: 5px 5px 0 var(--red);
+    }
+
+    .button.secondary {
+      background: var(--panel);
+      color: var(--ink);
+      box-shadow: 5px 5px 0 var(--blue);
+    }
+
+    .map-board {
+      position: relative;
+      min-height: 520px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      overflow: hidden;
+    }
+
+    .map-board::before {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border: 1px dashed rgba(17,17,17,.2);
+      pointer-events: none;
+    }
+
+    .station {
+      position: absolute;
+      width: min(42%, 210px);
+      padding: 14px 15px;
+      border: 2px solid var(--ink);
+      background: #fffef9;
+      border-radius: 8px;
+      box-shadow: 6px 6px 0 rgba(17,17,17,.16);
+    }
+
+    .station strong { display: block; margin-bottom: 4px; }
+    .station span { display: block; color: var(--muted); font-size: 13px; }
+    .s1 { top: 38px; left: 28px; border-color: var(--red); }
+    .s2 { top: 122px; right: 28px; border-color: var(--blue); }
+    .s3 { top: 238px; left: 70px; border-color: var(--green); }
+    .s4 { bottom: 106px; right: 62px; border-color: var(--amber); }
+    .s5 { bottom: 30px; left: 36px; border-color: var(--black); }
+
+    .track {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    main { padding: 54px min(6vw, 76px) 80px; }
+    section { max-width: 1180px; margin: 0 auto 58px; }
+    section > h2 {
+      font-family: Georgia, "Microsoft YaHei", serif;
+      font-size: clamp(30px, 4vw, 54px);
+      margin-bottom: 18px;
+    }
+    .section-lead { max-width: 800px; color: var(--muted); font-size: 18px; margin-bottom: 24px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.1);
+    }
+
+    .card h3 { font-size: 18px; margin-bottom: 8px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    .tag {
+      display: inline-block;
+      margin-bottom: 12px;
+      padding: 3px 8px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .red { color: var(--red); }
+    .blue { color: var(--blue); }
+    .green { color: var(--green); }
+    .amber { color: var(--amber); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      min-height: 158px;
+      border: 2px solid var(--ink);
+      background: #fffef8;
+      border-radius: 8px;
+      padding: 16px;
+      position: relative;
+    }
+    .step::after {
+      content: "→";
+      position: absolute;
+      top: 50%;
+      right: -18px;
+      transform: translateY(-50%);
+      font-size: 24px;
+      font-weight: 900;
+    }
+    .step:last-child::after { display: none; }
+    .num {
+      width: 28px;
+      height: 28px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+    .step strong { display: block; margin-bottom: 6px; }
+    .step p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .codebox {
+      background: #181713;
+      color: #f5ead4;
+      border-radius: 8px;
+      padding: 18px;
+      overflow-x: auto;
+      font-family: "Cascadia Mono", "Consolas", monospace;
+      font-size: 14px;
+      line-height: 1.55;
+      border: 2px solid var(--ink);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--ink);
+      color: #fff;
+      font-size: 14px;
+    }
+    tr:last-child td { border-bottom: 0; }
+
+    .route {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 18px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .route-nav {
+      background: var(--ink);
+      color: #fff;
+      padding: 22px;
+    }
+    .route-nav ol { margin: 0; padding-left: 20px; }
+    .route-nav li { margin-bottom: 14px; font-weight: 700; }
+    .route-body { padding: 22px; }
+    .route-body h3 { margin-bottom: 12px; }
+    .route-body ul { margin-top: 0; padding-left: 20px; }
+
+    .footer-note {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding-top: 28px;
+      border-top: 2px solid var(--ink);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 960px) {
+      header, .split, .route { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow { grid-template-columns: 1fr; }
+      .step::after { display: none; }
+      .map-board { min-height: 500px; }
+    }
+
+    @media (max-width: 620px) {
+      header { padding: 34px 18px; }
+      main { padding: 36px 18px 56px; }
+      .grid { grid-template-columns: 1fr; }
+      .station { position: relative; inset: auto; width: 100%; margin-bottom: 12px; }
+      .track { display: none; }
+      .map-board { min-height: unset; }
+      .hero-actions { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="eyebrow"><span class="pin"></span> Source Architecture Navigator</div>
+      <h1>把源码阅读变成可走的地图</h1>
+      <p class="lead">不再一上来画完整仓库大图，也不把每个文件拆成孤岛。先分类问题，再按函数、调用链、数据流和全局层级逐步建立理解。</p>
+      <div class="hero-actions">
+        <a class="button" href="#workflow">查看流程</a>
+        <a class="button secondary" href="#templates">查看输出模板</a>
+      </div>
+    </div>
+    <div class="map-board" aria-label="分层源码阅读地图">
+      <svg class="track" viewBox="0 0 520 520" preserveAspectRatio="none">
+        <path d="M90 96 C210 70 260 135 390 150 C470 170 440 250 320 276 C180 306 170 380 360 412" fill="none" stroke="#171717" stroke-width="5" stroke-linecap="round"/>
+        <path d="M90 96 C210 70 260 135 390 150 C470 170 440 250 320 276 C180 306 170 380 360 412" fill="none" stroke="#f7f3ea" stroke-width="2" stroke-dasharray="10 10" stroke-linecap="round"/>
+      </svg>
+      <div class="station s1"><strong>分类</strong><span>理解 / 定位 / 链路 / 架构 / 施工</span></div>
+      <div class="station s2"><strong>体征采样</strong><span>入口、manifest、核心目录</span></div>
+      <div class="station s3"><strong>局部地图</strong><span>每个函数一张小图</span></div>
+      <div class="station s4"><strong>分层合并</strong><span>功能流、接口流、配置流</span></div>
+      <div class="station s5"><strong>边界卡</strong><span>进入修改前先锁范围</span></div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>解决的不是"图不够大"</h2>
+      <p class="section-lead">真正的问题通常是问题没有分类、地图没有层级、证据没有边界，以及阅读和修改混在了一起。</p>
+      <div class="grid">
+        <article class="card">
+          <span class="tag red">问题 01</span>
+          <h3>全局图看不懂</h3>
+          <p>节点太多，边界不清，用户只能看到一团关系网。</p>
+        </article>
+        <article class="card">
+          <span class="tag blue">问题 02</span>
+          <h3>局部解释太碎</h3>
+          <p>只知道文件做什么，不知道系统为什么这样组织。</p>
+        </article>
+        <article class="card">
+          <span class="tag green">问题 03</span>
+          <h3>问越多越乱</h3>
+          <p>问题之间没有树，下一问会把上下文继续打散。</p>
+        </article>
+        <article class="card">
+          <span class="tag amber">问题 04</span>
+          <h3>观察污染仓库</h3>
+          <p>打印、临时文件和顺手改动混在一起，后续施工更难控。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="workflow">
+      <h2>主流程</h2>
+      <p class="section-lead">每轮都从模式和问题分类开始。只有当局部证据足够清晰时，才向全局合并。</p>
+      <div class="flow">
+        <div class="step"><span class="num">1</span><strong>问题分类</strong><p>理解、定位、调用链、架构、bug、需求、重构、施工、复盘。</p></div>
+        <div class="step"><span class="num">2</span><strong>读模式保护</strong><p>默认只读，不插打印，不生成无关分析文件。</p></div>
+        <div class="step"><span class="num">3</span><strong>仓库体征</strong><p>入口、manifest、核心目录、边缘路径先看清。</p></div>
+        <div class="step"><span class="num">4</span><strong>分层地图</strong><p>函数图、调用链、功能流、全局层逐步上卷。</p></div>
+        <div class="step"><span class="num">5</span><strong>下一问</strong><p>给可复制的问题模板，让探索像问路一样继续。</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>地图不是装饰</h2>
+      <div class="split">
+        <div>
+          <p class="section-lead">每张图必须回答一个当前问题，并说明它不回答什么。函数级地图先解决"这一小段怎么活"，再逐步合成系统地图。</p>
+          <table>
+            <tr><th>层级</th><th>用途</th><th>输出</th></tr>
+            <tr><td>L0</td><td>项目识别</td><td>入口、核心路径、边缘路径、配置来源</td></tr>
+            <tr><td>L1</td><td>函数/对象</td><td>输入、输出、副作用、上下游</td></tr>
+            <tr><td>L2</td><td>调用链</td><td>定义点、调用者、被调用者、终点</td></tr>
+            <tr><td>L3</td><td>功能流</td><td>页面流、接口流、数据流、任务流、配置流</td></tr>
+            <tr><td>L4</td><td>全局层</td><td>分层架构、模块边界、稳定性判断</td></tr>
+          </table>
+        </div>
+        <pre class="codebox"><code>flowchart TD
+  A["用户问题"] --> B["问题分类"]
+  B --> C["只读证据"]
+  C --> D["L1 函数地图"]
+  D --> E["L2 调用链"]
+  E --> F["L3 功能流"]
+  F --> G["L4 分层架构"]</code></pre>
+      </div>
+    </section>
+
+    <section id="templates">
+      <h2>输出结构</h2>
+      <div class="route">
+        <div class="route-nav">
+          <ol>
+            <li>问题类别</li>
+            <li>当前边界</li>
+            <li>证据</li>
+            <li>地图</li>
+            <li>路线</li>
+            <li>下一问</li>
+          </ol>
+        </div>
+        <div class="route-body">
+          <h3>一次回答要让用户能继续走</h3>
+          <ul>
+            <li>说明本轮是在理解、定位、追链路，还是施工前整理。</li>
+            <li>列出证据路径，不把推断写成事实。</li>
+            <li>每次只给 3-5 个最值得读的文件。</li>
+            <li>如果要改代码，先给施工边界卡：目标、涉及文件、不涉及文件、风险、验收、回滚。</li>
+          </ul>
+          <pre class="codebox"><code>问题类别: 调用链类
+当前边界: 只读，不改代码
+证据: path/to/file:line
+地图: 一张 L1 或 L2 小图
+阅读路线: 3-5 个文件
+下一问: 继续下钻 / 横向比较 / 进入施工前</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>体检也要有证据</h2>
+      <p class="section-lead">废弃代码、重复代码、命名混乱和架构断点都不能靠感觉下结论。每条发现都要能追到路径、符号、调用边、配置键或运行证据。</p>
+      <div class="grid">
+        <article class="card"><span class="tag red">断点</span><h3>理解在哪里断</h3><p>类型定义和消费层互相依赖，或字段在多层隐式改名。</p></article>
+        <article class="card"><span class="tag blue">重复</span><h3>是否会改漏</h3><p>重点不是像不像，而是未来改一处是否必须同步另一处。</p></article>
+        <article class="card"><span class="tag green">契约</span><h3>字段是否一致</h3><p>检查页面、接口、服务、存储之间的参数和返回结构。</p></article>
+        <article class="card"><span class="tag amber">配置</span><h3>默认值是否多源</h3><p>找环境变量、配置文件、启动参数和硬编码默认值。</p></article>
+      </div>
+    </section>
+
+    <div class="footer-note">
+      本页面是 `source-architecture-navigator` skill 的可视化说明。正式执行规则以 `SKILL.md` 与 `references/` 下的 spec 为准。
+    </div>
+  </main>
+</body>
+</html>
