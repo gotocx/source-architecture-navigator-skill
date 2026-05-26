@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -87,6 +90,31 @@ def verify(skill_dir: Path) -> int:
         if PLACEHOLDER_MARKER in text:
             errors.append(f"{rel_path} still contains placeholder markers")
 
+    output_templates = skill_dir / "references" / "output-templates.md"
+    if output_templates.exists():
+        text = read_text(output_templates)
+        for marker in ["仓库/zip 首轮导航模板", "证据表", "L0 项目识别卡", "L1 核心对象小图", "L2 调用链小图", "L3 功能/数据/配置流"]:
+            if marker not in text:
+                errors.append(f"output-templates.md missing marker: {marker}")
+
+    repo_probe_guide = skill_dir / "references" / "repo-probe-guide.md"
+    if repo_probe_guide.exists():
+        text = read_text(repo_probe_guide)
+        for marker in ["--keep-temp", "--extract-to", "--allow-output-in-repo"]:
+            if marker not in text:
+                errors.append(f"repo-probe-guide.md missing marker: {marker}")
+
+    spec = skill_dir / "references" / "source-reading-spec.md"
+    if spec.exists():
+        text = read_text(spec)
+        for marker in ["证据表", "成员数量", "单文件大小", "只解压源码"]:
+            if marker not in text:
+                errors.append(f"source-reading-spec.md missing marker: {marker}")
+
+    repo_probe = skill_dir / "scripts" / "repo_probe.py"
+    if repo_probe.exists():
+        errors.extend(_verify_repo_probe_behavior(repo_probe))
+
     if errors:
         for message in errors:
             print("ERROR: " + message)
@@ -94,6 +122,67 @@ def verify(skill_dir: Path) -> int:
 
     print("OK: source-architecture-navigator skill checks passed")
     return 0
+
+
+def _verify_repo_probe_behavior(repo_probe: Path) -> list[str]:
+    errors: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="san_validate_") as tmp:
+        root = Path(tmp)
+        sample = root / "sample"
+        pipeline = sample / "src" / "pkg" / "pipeline"
+        scripts = sample / "scripts"
+        pipeline.mkdir(parents=True)
+        scripts.mkdir(parents=True)
+        (sample / "README.md").write_text("Sample project\n", encoding="utf-8")
+        (pipeline / "architecture_entry.py").write_text(
+            "class StereoArchitecturePipeline:\n"
+            "    def run_sequence(self):\n"
+            "        return []\n",
+            encoding="utf-8",
+        )
+        (scripts / "run_architecture_entry.py").write_text(
+            "from pkg.pipeline.architecture_entry import StereoArchitecturePipeline\n"
+            "def main():\n"
+            "    return StereoArchitecturePipeline().run_sequence()\n",
+            encoding="utf-8",
+        )
+
+        archive = root / "sample.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for path in sample.rglob("*"):
+                if path.is_file():
+                    zf.write(path, path.relative_to(sample).as_posix())
+
+        result = subprocess.run(
+            [sys.executable, str(repo_probe), str(archive), "--max-files", "200"],
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        if result.returncode != 0:
+            errors.append("repo_probe.py failed on sample zip: " + result.stderr.strip())
+        else:
+            stdout = result.stdout
+            for marker in [
+                "Extract root lifecycle",
+                "src/pkg/pipeline/architecture_entry.py",
+                "scripts/run_architecture_entry.py",
+                "StereoArchitecturePipeline",
+            ]:
+                if marker not in stdout:
+                    errors.append(f"repo_probe.py zip behavior missing marker: {marker}")
+
+        output_inside = sample / "probe.md"
+        result = subprocess.run(
+            [sys.executable, str(repo_probe), str(sample), "--output", str(output_inside)],
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        if result.returncode == 0:
+            errors.append("repo_probe.py should reject --output inside scanned repository by default")
+
+    return errors
 
 
 def main() -> int:

@@ -9,7 +9,7 @@ version: 1.0.0
 <!-- @类型: 工具参考 -->
 <!-- @目的: 说明如何用只读脚本快速获得仓库体征，而不污染目标仓库 -->
 
-`scripts/repo_probe.py` 用于读取仓库文件清单并输出摘要。默认只写终端输出，不在目标仓库落盘。
+`scripts/repo_probe.py` 用于读取仓库文件清单并输出摘要。默认只写终端输出，不在目标仓库落盘。输入可以是源码目录，也可以是 `.zip` 源码包；zip 默认解压到会自动清理的系统临时目录后扫描。
 
 ## 适用场景
 
@@ -27,6 +27,9 @@ version: 1.0.0
 
 ```bash
 python scripts/repo_probe.py <repo-path>
+python scripts/repo_probe.py <source.zip>
+python scripts/repo_probe.py <source.zip> --keep-temp
+python scripts/repo_probe.py <source.zip> --extract-to <outside-repo-analysis-dir>
 python scripts/repo_probe.py <repo-path> --json
 python scripts/repo_probe.py <repo-path> --max-files 5000
 ```
@@ -37,9 +40,13 @@ python scripts/repo_probe.py <repo-path> --max-files 5000
 python scripts/repo_probe.py <repo-path> --output <outside-or-user-approved-path>
 ```
 
+默认拒绝把 `--output` 写入被扫描仓库或 zip 解包根目录内。只有用户明确要这样做时，才使用 `--allow-output-in-repo`。
+
 ## 输出解读
 
 - Project card: 仓库根、文件总数、主语言、入口候选。
+- Source archive: 当输入是 zip 时显示原始 zip 路径、解包目录和该目录生命周期。
+- Zip scan: 显示解压了多少源码/文本成员，跳过了多少生成物或非文本成员。
 - Manifests: 依赖和构建配置入口。
 - Entry candidates: 可能的启动、路由、页面或任务入口。
 - Top directories: 主要目录形状。
