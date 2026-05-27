@@ -1270,34 +1270,35 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
   <title>{h(title)} · {REPORT_HEADING}</title>
   <style>
     :root {{
-      --bg: #f6f7f2;
+      --paper: #f7f3ea;
       --ink: #171717;
-      --muted: #5e666d;
-      --panel: #ffffff;
-      --line: #d8ddd6;
-      --nav: #111827;
-      --red: #bd2d35;
-      --teal: #0f766e;
-      --blue: #245a9a;
-      --gold: #946200;
-      --green: #27724c;
-      --soft-red: #fff0ef;
-      --soft-teal: #e8f5f2;
-      --soft-blue: #edf4ff;
-      --soft-gold: #fff7df;
-      --shadow: 0 18px 42px rgba(17, 24, 39, .09);
+      --muted: #68645e;
+      --line: #d8d0c2;
+      --panel: #fffaf0;
+      --panel-2: #ebe4d6;
+      --red: #c74231;
+      --blue: #246b86;
+      --green: #47725b;
+      --amber: #b16d22;
+      --black: #111;
+      --soft-red: #fff2ec;
+      --soft-green: #edf4ee;
+      --soft-blue: #edf5f8;
+      --soft-amber: #fff5df;
+      --shadow: 0 18px 45px rgba(28, 24, 18, .12);
     }}
     * {{ box-sizing: border-box; }}
     html {{ scroll-behavior: smooth; }}
     body {{
       margin: 0;
-      color: var(--ink);
       background:
-        linear-gradient(90deg, rgba(17, 24, 39, .045) 1px, transparent 1px),
-        linear-gradient(0deg, rgba(17, 24, 39, .035) 1px, transparent 1px),
-        var(--bg);
-      background-size: 30px 30px;
-      font: 15px/1.68 "Segoe UI", "Microsoft YaHei", sans-serif;
+        linear-gradient(90deg, rgba(23, 23, 23, .035) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(23, 23, 23, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      color: var(--ink);
+      font-family: "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
+      line-height: 1.62;
     }}
     a {{ color: var(--blue); text-decoration: none; border-bottom: 1px solid rgba(36, 90, 154, .35); }}
     a:hover {{ border-bottom-color: var(--blue); }}
@@ -1305,137 +1306,155 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       display: inline-block;
       max-width: 100%;
       padding: 2px 7px;
-      border: 1px solid rgba(17, 24, 39, .12);
-      border-radius: 5px;
-      background: #f4f6f6;
-      color: #101418;
+      border: 1px solid rgba(17, 17, 17, .18);
+      border-radius: 6px;
+      background: #fffef8;
+      color: var(--ink);
       font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
       word-break: break-word;
     }}
-    .layout {{
+    body > header {{
+      min-height: 88vh;
       display: grid;
-      grid-template-columns: 288px minmax(0, 1fr);
-      min-height: 100vh;
+      grid-template-columns: minmax(280px, 1fr) minmax(320px, 520px);
+      gap: 44px;
+      align-items: center;
+      padding: 56px min(6vw, 76px) 42px;
+      border-bottom: 2px solid var(--ink);
+      background:
+        repeating-linear-gradient(120deg, rgba(36, 107, 134, .055) 0 2px, transparent 2px 22px),
+        linear-gradient(135deg, rgba(255,255,255,.72), rgba(235,228,214,.8));
     }}
-    aside {{
-      position: sticky;
-      top: 0;
-      height: 100vh;
-      padding: 28px 24px;
-      background: var(--nav);
-      color: #fff;
-      overflow: auto;
-    }}
-    .brand {{
-      margin: 0;
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 28px;
-      line-height: 1.08;
-    }}
-    .side-note {{
-      margin: 14px 0 24px;
-      color: #bbc4d2;
-      font-size: 13px;
-    }}
-    nav a {{
-      display: block;
-      margin: 7px 0;
-      padding: 8px 10px;
-      border: 1px solid rgba(255, 255, 255, .08);
-      border-radius: 7px;
-      color: #f8fafc;
-      background: rgba(255, 255, 255, .035);
-    }}
-    nav a:hover {{ background: rgba(255, 255, 255, .11); border-color: rgba(255, 255, 255, .22); }}
-    main {{ padding: 34px min(5vw, 72px) 72px; }}
-    .hero {{
-      display: grid;
-      grid-template-columns: minmax(0, 1.1fr) 360px;
-      gap: 24px;
-      align-items: stretch;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      box-shadow: var(--shadow);
-      overflow: hidden;
-    }}
-    .hero-text {{ padding: 34px; }}
     .eyebrow {{
       display: inline-flex;
-      padding: 4px 9px;
-      border-radius: 999px;
-      background: var(--soft-red);
-      color: var(--red);
-      font-size: 12px;
-      font-weight: 800;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      border: 1px solid var(--ink);
+      background: var(--panel);
+      font-size: 13px;
       text-transform: uppercase;
     }}
-    h1, h2, h3 {{ margin: 0; line-height: 1.18; letter-spacing: 0; }}
-    h1 {{
-      margin-top: 14px;
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 52px;
-      max-width: 920px;
+    .pin {{
+      width: 9px;
+      height: 9px;
+      background: var(--red);
+      border-radius: 50%;
+      box-shadow: 0 0 0 4px rgba(199, 66, 49, .16);
     }}
-    .subtitle {{ margin: 16px 0 0; color: var(--muted); font-size: 17px; max-width: 860px; }}
-    .action-row {{
+    h1, h2, h3 {{ margin: 0; line-height: 1.12; letter-spacing: 0; }}
+    h1 {{
+      margin-top: 22px;
+      max-width: 860px;
+      font-family: Georgia, "Microsoft YaHei", serif;
+      font-size: clamp(44px, 6vw, 92px);
+      font-weight: 700;
+    }}
+    .lead {{
+      max-width: 760px;
+      margin: 22px 0 0;
+      font-size: clamp(18px, 2vw, 24px);
+      color: #35312b;
+    }}
+    .hero-actions {{
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 22px;
+      gap: 12px;
+      margin-top: 30px;
     }}
-    button, .button-link {{
+    button, .button {{
       appearance: none;
-      border: 1px solid var(--nav);
-      border-radius: 7px;
-      padding: 9px 12px;
-      background: var(--nav);
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border: 2px solid var(--ink);
+      background: var(--ink);
       color: #fff;
-      font: 700 13px/1 "Segoe UI", "Microsoft YaHei", sans-serif;
+      text-decoration: none;
+      font-weight: 700;
+      border-radius: 6px;
+      box-shadow: 5px 5px 0 var(--red);
       cursor: pointer;
-      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+      transition: transform .18s ease, box-shadow .18s ease;
     }}
-    button:hover, .button-link:hover {{
-      transform: translateY(-1px);
-      box-shadow: 0 8px 18px rgba(17, 24, 39, .16);
-      border-bottom-color: var(--nav);
+    button:hover, .button:hover {{
+      transform: translate(-1px, -1px);
     }}
-    button.secondary, .button-link.secondary {{
-      background: #fff;
-      color: var(--nav);
-      border-color: var(--line);
+    button.secondary, .button.secondary {{
+      background: var(--panel);
+      color: var(--ink);
+      box-shadow: 5px 5px 0 var(--blue);
+    }}
+    .report-nav {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 24px;
+    }}
+    .report-nav a {{
+      display: inline-flex;
+      min-height: 34px;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid var(--ink);
+      border-radius: 999px;
+      background: rgba(255, 250, 240, .82);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+    }}
+    .report-nav a:hover {{ background: #fffef8; border-bottom-color: var(--ink); }}
+    .map-board {{
+      position: relative;
+      min-height: 520px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      overflow: hidden;
+    }}
+    .map-board::before {{
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border: 1px dashed rgba(17,17,17,.2);
+      pointer-events: none;
     }}
     .source-card {{
-      padding: 28px;
-      background: #fdfbf5;
-      border-left: 5px solid var(--red);
       display: grid;
       align-content: center;
-      gap: 10px;
+      gap: 12px;
     }}
     .source-card p {{ margin: 0; }}
+    main {{ padding: 54px min(6vw, 76px) 80px; }}
     .metrics {{
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-      margin: 18px 0 0;
+      gap: 14px;
+      max-width: 1180px;
+      margin: 0 auto 58px;
     }}
     .metric {{
       min-height: 106px;
-      padding: 15px;
-      border: 1px solid var(--line);
+      padding: 18px;
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: rgba(255, 255, 255, .92);
+      background: var(--panel);
+      box-shadow: 4px 4px 0 rgba(17,17,17,.1);
     }}
     .metric span, .metric small {{ display: block; color: var(--muted); }}
-    .metric strong {{ display: block; margin: 7px 0 4px; font-size: 28px; line-height: 1; }}
+    .metric strong {{ display: block; margin: 7px 0 4px; font-size: 32px; line-height: 1; }}
     section {{
-      margin-top: 28px;
-      padding: 28px;
-      border: 1px solid var(--line);
+      max-width: 1180px;
+      margin: 0 auto 58px;
+      padding: 24px;
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: rgba(255, 255, 255, .96);
-      box-shadow: 0 8px 24px rgba(17, 24, 39, .04);
+      background: var(--panel);
+      box-shadow: 4px 4px 0 rgba(17,17,17,.1);
       transition: opacity .45s ease, transform .45s ease, box-shadow .25s ease;
     }}
     section.visible {{
@@ -1448,25 +1467,29 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     @keyframes pulseFocus {{
       0% {{ box-shadow: 0 0 0 0 rgba(189, 45, 53, .28); }}
       70% {{ box-shadow: 0 0 0 16px rgba(189, 45, 53, 0); }}
-      100% {{ box-shadow: 0 8px 24px rgba(17, 24, 39, .04); }}
+      100% {{ box-shadow: 4px 4px 0 rgba(17,17,17,.1); }}
     }}
     section > header {{
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      padding-bottom: 13px;
+      padding-bottom: 16px;
       margin-bottom: 18px;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 2px solid var(--ink);
     }}
-    section h2 {{ font-family: Georgia, "Times New Roman", serif; font-size: 30px; }}
+    section h2 {{
+      font-family: Georgia, "Microsoft YaHei", serif;
+      font-size: clamp(30px, 4vw, 54px);
+    }}
     .tag {{
       align-self: start;
       padding: 4px 10px;
-      border: 1px solid var(--line);
+      border: 1px solid currentColor;
       border-radius: 999px;
       color: var(--muted);
-      background: #fbfcfa;
+      background: var(--panel);
       font-size: 12px;
+      font-weight: 700;
       white-space: nowrap;
     }}
     .parse-grid {{
@@ -1476,14 +1499,15 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     }}
     .parse-cell {{
       min-height: 128px;
-      padding: 15px;
-      border: 1px solid var(--line);
+      padding: 18px;
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: #fff;
+      background: #fffef8;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
     }}
     .parse-cell strong, .parse-cell span {{ display: block; }}
-    .parse-cell span {{ margin: 8px 0; font-weight: 800; color: var(--teal); }}
-    .parse-cell.todo span {{ color: var(--gold); }}
+    .parse-cell span {{ margin: 8px 0; font-weight: 800; color: var(--green); }}
+    .parse-cell.todo span {{ color: var(--amber); }}
     .parse-cell p {{ margin: 0; color: var(--muted); }}
     .two-col {{
       display: grid;
@@ -1492,42 +1516,43 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     }}
     .fact-table th {{
       width: 180px;
-      color: var(--gold);
-      background: #f7f6ef;
+      color: var(--amber);
+      background: #fffef8;
     }}
     table {{
       width: 100%;
       border-collapse: collapse;
-      border: 1px solid var(--line);
+      border: 2px solid var(--ink);
       border-radius: 8px;
       overflow: hidden;
-      background: #fff;
+      background: var(--panel);
       font-size: 14px;
     }}
     th, td {{
-      padding: 11px 12px;
+      padding: 12px 14px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: top;
     }}
-    th {{ background: #f1f4f2; color: #263238; }}
+    th {{ background: var(--ink); color: #fff; }}
     tr:last-child td, tr:last-child th {{ border-bottom: 0; }}
     .diagram {{
       margin: 0;
       padding: 22px;
-      border: 1px solid #252a31;
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: #101418;
-      color: #e6edf3;
+      background: #181713;
+      color: #f5ead4;
       overflow-x: auto;
       font: 13px/1.55 "Cascadia Mono", Consolas, monospace;
     }}
     .function-group {{
       margin-top: 16px;
       padding: 16px;
-      border: 1px solid var(--line);
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: #fbfcfb;
+      background: #fffef8;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
     }}
     .function-group summary {{
       display: flex;
@@ -1543,7 +1568,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       content: "展开";
       padding: 3px 8px;
       border-radius: 999px;
-      background: var(--soft-blue);
+      background: var(--panel);
       color: var(--blue);
       font-size: 12px;
     }}
@@ -1556,18 +1581,18 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       gap: 10px;
       margin: 16px 0;
       padding: 12px;
-      border: 1px solid var(--line);
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: #f8faf8;
+      background: var(--panel-2);
     }}
     .toolbar input {{
       min-width: min(420px, 100%);
       flex: 1;
-      border: 1px solid var(--line);
-      border-radius: 7px;
+      border: 2px solid var(--ink);
+      border-radius: 6px;
       padding: 9px 11px;
       font: inherit;
-      background: #fff;
+      background: #fffef8;
     }}
     .toolbar .count {{
       color: var(--muted);
@@ -1577,20 +1602,20 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .func-card {{
       padding: 13px 14px;
       margin: 10px 0;
-      border: 1px solid var(--line);
-      border-left: 4px solid var(--blue);
+      border: 2px solid var(--ink);
+      border-left: 8px solid var(--blue);
       border-radius: 8px;
-      background: #fff;
-      transition: transform .18s ease, border-color .18s ease, background .18s ease;
+      background: #fffef8;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
     }}
     .func-card:hover {{
-      transform: translateX(2px);
-      border-color: #9eb9da;
-      background: #fbfdff;
+      transform: translate(-2px, -2px);
+      box-shadow: 7px 7px 0 rgba(17,17,17,.14);
+      background: #fff;
     }}
     .func-card.is-hidden {{ display: none; }}
     .function-group.no-match {{ display: none; }}
-    }}
     .func-card .sig {{
       color: var(--blue);
       font: 13px/1.45 "Cascadia Mono", Consolas, monospace;
@@ -1608,7 +1633,9 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .func-card .meta span {{
       padding: 2px 7px;
       border-radius: 999px;
-      background: var(--soft-blue);
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      background: var(--panel);
       color: var(--blue);
       font-weight: 800;
     }}
@@ -1625,14 +1652,15 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       top: 8px;
       bottom: 8px;
       width: 2px;
-      background: var(--line);
+      background: var(--ink);
     }}
     .timeline-item {{
       position: relative;
       padding: 14px 16px;
-      border: 1px solid var(--line);
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: #fff;
+      background: #fffef8;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
     }}
     .timeline-item::before {{
       content: "";
@@ -1650,10 +1678,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .issue {{
       margin: 12px 0;
       padding: 14px 16px;
-      border: 1px solid #f0d1c8;
-      border-left: 4px solid var(--red);
+      border: 2px solid var(--ink);
+      border-left: 8px solid var(--red);
       border-radius: 8px;
       background: var(--soft-red);
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
     }}
     .issue span {{
       display: inline-block;
@@ -1669,19 +1698,20 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .issue small {{ color: var(--green); font-weight: 700; }}
     .note {{
       padding: 14px 16px;
-      border: 1px solid var(--line);
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: var(--soft-teal);
+      background: var(--soft-green);
     }}
     .route-panel {{
       padding: 18px;
-      border: 1px solid var(--line);
+      border: 2px solid var(--ink);
       border-radius: 8px;
-      background: #fff;
+      background: var(--panel);
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
     }}
-    .route-panel.expert {{ background: #fbf7ff; }}
-    .route-panel h3 {{ color: var(--teal); margin-bottom: 10px; }}
-    .route-panel.expert h3 {{ color: #7750a6; }}
+    .route-panel.expert {{ background: #fffef8; }}
+    .route-panel h3 {{ color: var(--green); margin-bottom: 10px; }}
+    .route-panel.expert h3 {{ color: var(--blue); }}
     .route-panel ol {{ margin: 0; padding-left: 22px; }}
     .route-panel li {{ margin: 10px 0; }}
     .route-panel span {{ display: block; color: var(--muted); }}
@@ -1694,14 +1724,14 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       font-weight: 800;
       font-size: 12px;
     }}
-    .coupling.cool {{ background: var(--soft-teal); color: var(--teal); }}
-    .coupling.warm {{ background: var(--soft-gold); color: var(--gold); }}
+    .coupling.cool {{ background: var(--soft-green); color: var(--green); }}
+    .coupling.warm {{ background: var(--soft-amber); color: var(--amber); }}
     .coupling.hot {{ background: var(--soft-red); color: var(--red); }}
     .level {{
       display: inline-block;
       padding: 2px 8px;
       border-radius: 999px;
-      background: var(--soft-blue);
+      background: var(--panel);
       color: var(--blue);
       font-weight: 800;
       font-size: 12px;
@@ -1715,39 +1745,56 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       min-height: 128px;
       padding: 16px;
       border-radius: 8px;
-      background: #111827;
+      border: 2px solid var(--ink);
+      background: #181713;
       color: #fff;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.14);
     }}
-    .question strong {{ color: #ffe08a; }}
+    .question strong {{ color: #f5ead4; }}
     .muted {{ color: var(--muted); }}
-    footer {{ margin-top: 24px; color: var(--muted); font-size: 13px; }}
+    footer {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding-top: 28px;
+      border-top: 2px solid var(--ink);
+      color: var(--muted);
+      font-size: 14px;
+    }}
     @media (max-width: 1100px) {{
-      .layout {{ display: block; }}
-      aside {{ position: static; height: auto; }}
-      main {{ padding: 20px; }}
-      .hero, .metrics, .parse-grid, .two-col, .next-grid {{ grid-template-columns: 1fr; }}
-      h1 {{ font-size: 34px; }}
+      body > header, .metrics, .parse-grid, .two-col, .next-grid {{ grid-template-columns: 1fr; }}
+      body > header {{ min-height: unset; }}
+    }}
+    @media (max-width: 620px) {{
+      body > header {{ padding: 34px 18px; }}
+      main {{ padding: 36px 18px 56px; }}
+      .map-board {{ min-height: unset; }}
+      .hero-actions {{ flex-direction: column; align-items: stretch; }}
     }}
     @media print {{
-      aside {{ display: none; }}
-      .layout {{ display: block; }}
       body {{ background: #fff; }}
       main {{ padding: 0; }}
-      section, .hero {{ box-shadow: none; break-inside: avoid; }}
+      section, .metric, .map-board {{ box-shadow: none; break-inside: avoid; }}
     }}
   </style>
 </head>
 <body>
-  <div class="layout">
-    <aside>
-      <p class="brand">Source Architecture Dossier</p>
-      <p class="side-note">一次全解析：先建立全局、模块、函数、配置、风险和阅读路线，再选择下钻点。</p>
-      <nav>
+  <header>
+    <div>
+      <div class="eyebrow"><span class="pin"></span> Source Architecture Navigator</div>
+      <h1>{h(title)}</h1>
+      <p class="lead">{h(subtitle or project_hint)}</p>
+      <div class="hero-actions">
+            <button type="button" data-action="focus-golden">高亮主路径</button>
+            <button type="button" class="secondary" data-action="expand-functions">展开全部函数</button>
+            <button type="button" class="secondary" data-action="collapse-functions">收起函数地图</button>
+            <button type="button" class="secondary" data-action="toggle-evidence">显示/隐藏证据</button>
+      </div>
+      <nav class="report-nav">
         <a href="#project">项目识别</a>
         <a href="#coverage">解析覆盖</a>
         <a href="#layers">L3 全局分层</a>
         <a href="#modules">L2 模块关系</a>
-        <a href="#functions">L1 逐函数地图</a>
+        <a href="#functions">L1 函数地图</a>
         <a href="#golden">Golden Path</a>
         <a href="#contracts">配置与契约</a>
         <a href="#risks">问题诊断</a>
@@ -1755,28 +1802,17 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         <a href="#evidence">证据表</a>
         <a href="#next">下一问</a>
       </nav>
-    </aside>
-    <main>
-      <div class="hero">
-        <div class="hero-text">
-          <span class="eyebrow">one-pass source analysis</span>
-          <h1>{h(title)}</h1>
-          <p class="subtitle">{h(subtitle or project_hint)}</p>
-          <div class="action-row">
-            <button type="button" data-action="focus-golden">高亮主路径</button>
-            <button type="button" class="secondary" data-action="expand-functions">展开全部函数</button>
-            <button type="button" class="secondary" data-action="collapse-functions">收起函数地图</button>
-            <button type="button" class="secondary" data-action="toggle-evidence">显示/隐藏证据</button>
-          </div>
-        </div>
-        <div class="source-card">
+    </div>
+    <div class="map-board source-card" aria-label="源码分析报告元数据">
           <p><b>报告类型</b><br>{h(REPORT_HEADING)}</p>
           <p><b>生成时间</b><br>{h(now)}</p>
           <p><b>输入</b><br>{code(source_label)}</p>
           <p><b>扫描根</b><br>{code(report.get('root', scan_root))}</p>
           <p><b>zip 成员</b><br>{h(zip_stats.get('members', 'n/a'))}</p>
-        </div>
-      </div>
+    </div>
+  </header>
+
+  <main>
 
       <div class="metrics">
         {render_metric("扫描文件", report.get("file_count_scanned", 0), "受 --max-files 限制")}
@@ -1898,7 +1934,6 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         本报告来自静态源码扫描和启发式归类。它的目标是一次性建立完整阅读地图，不替代运行测试、精确调用链搜索和人工源码复核。
       </footer>
     </main>
-  </div>
   <script>
     const sections = document.querySelectorAll('section');
     const reveal = new IntersectionObserver((entries) => {{
