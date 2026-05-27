@@ -94,7 +94,7 @@ def verify(skill_dir: Path) -> int:
     output_templates = skill_dir / "references" / "output-templates.md"
     if output_templates.exists():
         text = read_text(output_templates)
-        for marker in ["仓库/zip 首轮导航模板", "证据表", "L0 项目识别卡", "L1 核心对象小图", "L2 调用链小图", "L3 功能/数据/配置流", "HTML 阅读报告内容清单"]:
+        for marker in ["仓库/zip 首轮导航模板", "证据表", "L0 项目识别卡", "L1 核心对象小图", "L2 调用链小图", "L3 功能/数据/配置流", "一次全解析 HTML 报告内容清单"]:
             if marker not in text:
                 errors.append(f"output-templates.md missing marker: {marker}")
 
@@ -108,7 +108,7 @@ def verify(skill_dir: Path) -> int:
     spec = skill_dir / "references" / "source-reading-spec.md"
     if spec.exists():
         text = read_text(spec)
-        for marker in ["证据表", "成员数量", "单文件大小", "只解压源码", "HTML 报告 spec"]:
+        for marker in ["证据表", "成员数量", "单文件大小", "只解压源码", "一次全解析 HTML 报告 spec"]:
             if marker not in text:
                 errors.append(f"source-reading-spec.md missing marker: {marker}")
 
@@ -233,11 +233,16 @@ def _verify_html_report_behavior(html_report: Path) -> list[str]:
         else:
             html_text = read_text(output)
             for marker in [
-                "源码阅读导航报告",
-                "L0 项目识别卡",
-                "L1-L3 分层地图",
-                "建议先看 3-5 个文件",
+                "源码一次全解析报告",
+                "项目识别卡",
+                "一次全解析覆盖矩阵",
+                "L3 全局分层架构",
+                "L2 模块关系图",
+                "L1 逐函数地图",
+                "Golden Path 核心路径识别",
                 "证据表",
+                "symbolSearch",
+                "data-action=\"focus-golden\"",
                 "StereoArchitecturePipeline",
             ]:
                 if marker not in html_text:

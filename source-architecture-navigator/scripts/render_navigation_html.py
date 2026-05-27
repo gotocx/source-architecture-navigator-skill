@@ -25,7 +25,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import repo_probe  # noqa: E402
 
 
-REPORT_HEADING = "源码阅读导航报告"
+REPORT_HEADING = "源码一次全解析报告"
 UNKNOWN = "待源码阅读确认"
 
 
@@ -56,7 +56,7 @@ def code(value: object) -> str:
 
 def strip_markdown(line: str) -> str:
     line = re.sub(r"^#+\s*", "", line.strip())
-    line = re.sub(r"[*_`>#\[\]()]|\!\[[^\]]*\]", "", line)
+    line = re.sub(r"[*`>#\[\]()]|\!\[[^\]]*\]", "", line)
     line = re.sub(r"https?://\S+", "", line)
     return compact(line, 150)
 
@@ -326,6 +326,422 @@ def render_evidence(rows: list[dict]) -> str:
         <thead><tr><th>对象/边/路线项</th><th>等级</th><th>证据位置</th><th>状态</th></tr></thead>
         <tbody>{''.join(body)}</tbody>
       </table>
+    """
+
+
+INTERNAL_MARKERS = {
+    "pipeline",
+    "routes",
+    "api",
+    "pages",
+    "components",
+    "state",
+    "services",
+    "models",
+    "schemas",
+    "db",
+    "data",
+    "train",
+    "eval",
+    "flow",
+    "depth",
+    "monitor",
+    "utils",
+    "config",
+}
+
+
+def module_key(path: str) -> str:
+    parts = Path(path).parts
+    if not parts:
+        return "(root)"
+    lowered = [part.lower() for part in parts]
+    if lowered[0] == "scripts":
+        return "scripts/"
+    if lowered[0] in {"tests", "test"}:
+        return "tests/"
+    if lowered[0] == "src" and len(parts) >= 3:
+        for part in parts[2:-1]:
+            if part.lower() in INTERNAL_MARKERS:
+                return f"{part}/"
+        if len(parts) >= 4:
+            return f"{parts[2]}/"
+    if len(parts) >= 2:
+        return f"{parts[0]}/"
+    return "(root)"
+
+
+def target_module(target: str) -> str:
+    parts = [part for part in re.split(r"[./\\]", target) if part and part not in {"src"}]
+    for part in parts:
+        if part.lower() in INTERNAL_MARKERS:
+            return f"{part}/"
+    if len(parts) >= 2 and parts[0] not in {"typing", "pathlib", "os", "sys", "json", "re"}:
+        return f"{parts[-2]}/"
+    return "external"
+
+
+def build_module_profiles(report: dict) -> list[dict]:
+    profiles: dict[str, dict] = {}
+    for rel in report.get("source_files", []):
+        key = module_key(rel)
+        profile = profiles.setdefault(
+            key,
+            {"module": key, "files": [], "symbols": [], "depends_on": set(), "depended_by": set(), "lines": 0},
+        )
+        profile["files"].append(rel)
+        profile["lines"] += int(report.get("line_counts", {}).get(rel, 0))
+
+    for symbol in report.get("symbol_samples", []):
+        key = module_key(symbol["path"])
+        profile = profiles.setdefault(
+            key,
+            {"module": key, "files": [], "symbols": [], "depends_on": set(), "depended_by": set(), "lines": 0},
+        )
+        profile["symbols"].append(symbol)
+
+    for edge in report.get("import_edge_samples", []):
+        source_key = module_key(edge["source"])
+        target_key = target_module(edge["target"])
+        if target_key != source_key:
+            source = profiles.setdefault(
+                source_key,
+                {"module": source_key, "files": [], "symbols": [], "depends_on": set(), "depended_by": set(), "lines": 0},
+            )
+            source["depends_on"].add(target_key)
+            if target_key != "external":
+                target = profiles.setdefault(
+                    target_key,
+                    {"module": target_key, "files": [], "symbols": [], "depends_on": set(), "depended_by": set(), "lines": 0},
+                )
+                target["depended_by"].add(source_key)
+
+    result = []
+    for profile in profiles.values():
+        profile["files"] = unique(profile["files"])
+        profile["depends_on"] = sorted(profile["depends_on"])
+        profile["depended_by"] = sorted(profile["depended_by"])
+        result.append(profile)
+    return sorted(result, key=lambda item: (-len(item["symbols"]), item["module"]))
+
+
+def role_for_module(name: str) -> str:
+    lower = name.lower()
+    if lower == "scripts/":
+        return "启动、烟测、导出、性能脚本"
+    if "pipeline" in lower:
+        return "主流程编排和数据结构汇合点"
+    if "depth" in lower:
+        return "深度估计、深度到视差转换"
+    if "flow" in lower:
+        return "几何搬运、光流、时序推导"
+    if "train" in lower or "model" in lower:
+        return "模型输入契约、训练数据和网络实现"
+    if "eval" in lower:
+        return "评估、可视化和指标输出"
+    if "data" in lower:
+        return "数据读取、预处理或缓存"
+    if "monitor" in lower:
+        return "运行观测和旁路探针"
+    if lower == "tests/":
+        return "行为验证和回归保护"
+    return "源码模块，需结合入口和调用边继续确认"
+
+
+def coupling_label(profile: dict) -> tuple[str, str]:
+    score = len(profile["depends_on"]) + len(profile["depended_by"])
+    if "external" in profile["depends_on"]:
+        score -= 1
+    if score >= 6:
+        return "高", "hot"
+    if score >= 2:
+        return "中", "warm"
+    return "低", "cool"
+
+
+def symbol_signature(item: dict) -> str:
+    signature = item.get("signature") or item.get("name", "")
+    return compact(signature, 120)
+
+
+def render_full_parse_matrix(report: dict, profiles: list[dict], risks: list[dict]) -> str:
+    checks = [
+        ("项目识别", bool(report.get("readme_files") or report.get("manifests")), "README / manifest / 目录形状"),
+        ("入口识别", bool(report.get("entry_candidates")), "脚本、路由、页面或任务入口"),
+        ("全局分层", bool(profiles), "按目录和源码模块分层"),
+        ("模块依赖", bool(report.get("import_edge_samples")), "静态 import / require 边"),
+        ("逐函数地图", bool(report.get("symbol_samples")), "函数、类、方法抽样"),
+        ("配置检查", bool(report.get("config_files") or report.get("manifests")), "manifest、配置文件、默认值线索"),
+        ("测试入口", bool(report.get("test_files")), "tests/ 或 test_* 文件"),
+        ("风险候选", bool(risks), "只列有静态证据的断点"),
+    ]
+    cells = []
+    for label, ok, detail in checks:
+        state = "已覆盖" if ok else "待补证据"
+        tone = "ok" if ok else "todo"
+        cells.append(
+            f"""
+            <div class="parse-cell {tone}">
+              <strong>{h(label)}</strong>
+              <span>{h(state)}</span>
+              <p>{h(detail)}</p>
+            </div>
+            """
+        )
+    return "\n".join(cells)
+
+
+def render_project_table(report: dict, project_hint: str, primary: str, profiles: list[dict]) -> str:
+    entries = report.get("entry_candidates", [])
+    manifests = report.get("manifests", [])
+    rows = [
+        ("项目目标线索", project_hint),
+        ("主语言信号", primary),
+        ("源码文件", f"{len(report.get('source_files', []))} 个"),
+        ("入口候选", ", ".join(entries[:4]) or UNKNOWN),
+        ("核心模块候选", ", ".join(profile["module"] for profile in profiles[:6]) or UNKNOWN),
+        ("配置/manifest", ", ".join((manifests + report.get("config_files", []))[:5]) or "未发现"),
+        ("测试入口", ", ".join(report.get("test_files", [])[:5]) or "未发现"),
+        ("边界提醒", "这是静态全解析报告；运行时行为、废弃代码和真实链路仍需下一轮证据确认。"),
+    ]
+    body = "".join(f"<tr><th>{h(key)}</th><td>{h(value)}</td></tr>" for key, value in rows)
+    return f"<table class=\"fact-table\"><tbody>{body}</tbody></table>"
+
+
+def render_layer_diagram(profiles: list[dict], report: dict) -> str:
+    def pick(predicate, fallback: str) -> str:
+        names = [profile["module"] for profile in profiles if predicate(profile["module"].lower())]
+        return "  ".join(names[:6]) if names else fallback
+
+    scripts = pick(lambda name: "scripts" in name, "scripts/ 或启动入口待确认")
+    interface = pick(lambda name: any(mark in name for mark in ["pages", "routes", "api"]), "接口/页面层未在静态入口中显式出现")
+    orchestration = pick(lambda name: "pipeline" in name or "service" in name, "编排层待从入口继续确认")
+    domain = pick(lambda name: any(mark in name for mark in ["depth", "flow", "train", "model", "data"]), "核心领域模块待确认")
+    support = pick(lambda name: any(mark in name for mark in ["eval", "monitor", "utils", "config"]), "评估/工具/配置层待确认")
+    tests = "  ".join(report.get("test_files", [])[:3]) or "测试入口未发现"
+    return f"""
+<pre class="diagram">┌──────────────────────────────────────────────────────────────┐
+│ 启动/脚本层                                                   │
+│ {h(scripts):<60} │
+├──────────────────────────────────────────────────────────────┤
+│ 页面/接口/任务入口层                                          │
+│ {h(interface):<60} │
+├──────────────────────────────────────────────────────────────┤
+│ 编排层                                                       │
+│ {h(orchestration):<60} │
+├──────────────────────────────────────────────────────────────┤
+│ 核心领域模块                                                 │
+│ {h(domain):<60} │
+├──────────────────────────────────────────────────────────────┤
+│ 支撑/配置/评估层                                              │
+│ {h(support):<60} │
+├──────────────────────────────────────────────────────────────┤
+│ 测试/验证层                                                   │
+│ {h(tests):<60} │
+└──────────────────────────────────────────────────────────────┘</pre>
+"""
+
+
+def render_module_table(profiles: list[dict]) -> str:
+    if not profiles:
+        return '<p class="muted">没有足够的模块线索。</p>'
+    rows = []
+    for profile in profiles[:14]:
+        label, tone = coupling_label(profile)
+        rows.append(
+            f"""
+            <tr>
+              <td><b>{h(profile['module'])}</b></td>
+              <td>{h(role_for_module(profile['module']))}</td>
+              <td>{h(len(profile['files']))}</td>
+              <td>{h(len(profile['symbols']))}</td>
+              <td>{h(', '.join(profile['depends_on'][:5]) or '无明显内部依赖')}</td>
+              <td>{h(', '.join(profile['depended_by'][:5]) or '未发现')}</td>
+              <td><span class="coupling {tone}">{h(label)}</span></td>
+            </tr>
+            """
+        )
+    return f"""
+    <table>
+      <thead><tr><th>模块</th><th>职责推断</th><th>文件</th><th>符号</th><th>依赖谁</th><th>被谁依赖</th><th>耦合</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+    """
+
+
+def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool) -> str:
+    groups = []
+    for profile in profiles[:8]:
+        symbols = profile["symbols"][:8]
+        if not symbols:
+            continue
+        cards = []
+        for item in symbols:
+            badge = item.get("kind", "symbol")
+            search_text = f"{profile['module']} {item.get('name', '')} {item.get('signature', '')} {item.get('path', '')}"
+            cards.append(
+                f"""
+                <article class="func-card" data-symbol-text="{h(search_text).lower()}">
+                  <div class="sig">{h(symbol_signature(item))}</div>
+                  <p>{h(infer_symbol_note(item))}</p>
+                  <div class="meta"><span>{h(badge)}</span>{path_link(f"{item['path']}:{item['line']}", scan_root, linkable)}</div>
+                </article>
+                """
+            )
+        groups.append(
+            f"""
+            <details class="function-group" open>
+              <summary>{h(profile['module'])} <small>{h(role_for_module(profile['module']))}</small></summary>
+              {''.join(cards)}
+            </details>
+            """
+        )
+    return "\n".join(groups) or '<p class="muted">未抽取到函数、类或组件定义。</p>'
+
+
+def infer_symbol_note(item: dict) -> str:
+    name = item.get("name", "")
+    lower = name.lower()
+    if any(mark in lower for mark in ["config", "settings", "options"]):
+        return "配置或参数结构，优先检查默认值和覆盖来源。"
+    if any(mark in lower for mark in ["input", "output", "state", "result", "summary", "schema"]):
+        return "数据契约对象，适合做字段旅程和接口契约追踪。"
+    if any(mark in lower for mark in ["run", "main", "execute", "handle", "process"]):
+        return "运行或编排节点，适合下一轮画 L1/L2 调用链。"
+    if any(mark in lower for mark in ["load", "read", "fetch", "parse"]):
+        return "输入或加载节点，适合确认数据来源和副作用。"
+    if any(mark in lower for mark in ["save", "write", "export", "render"]):
+        return "输出或落盘节点，适合检查产物边界。"
+    if item.get("kind") == "class":
+        return "类级边界，先看构造参数、公开方法和被谁实例化。"
+    return "可下钻的源码对象，需结合上下游搜索确认职责。"
+
+
+def render_golden_path(route: list[dict], report: dict) -> str:
+    steps = []
+    labels = ["入口装配", "核心编排", "核心对象", "边界适配", "验证/配置"]
+    for idx, item in enumerate(route[:5]):
+        steps.append(
+            f"""
+            <div class="timeline-item">
+              <h3>{idx + 1}. {h(labels[idx] if idx < len(labels) else '下一层')}</h3>
+              <p>{code(item['path'])}</p>
+              <small>{h(item['purpose'])}</small>
+            </div>
+            """
+        )
+    if not steps:
+        steps.append('<div class="timeline-item"><h3>1. 待确认入口</h3><p>先补充可运行入口或文件清单。</p></div>')
+    return "\n".join(steps)
+
+
+def build_risks(report: dict, profiles: list[dict]) -> list[dict]:
+    risks: list[dict] = []
+    if not report.get("readme_files"):
+        risks.append({"level": "P2", "kind": "目标线索缺失", "text": "未发现 README，项目目标需要从入口和 manifest 反推。", "fix": "先补项目目标、运行入口和硬边界。"})
+    if not report.get("entry_candidates"):
+        risks.append({"level": "P1", "kind": "入口不清", "text": "静态探针没有找到明确入口，阅读路线容易碎片化。", "fix": "先用文件清单或启动命令确定 main/script/route。"})
+    if len(report.get("entry_candidates", [])) > 12:
+        risks.append({"level": "P2", "kind": "入口过多", "text": f"发现 {len(report.get('entry_candidates', []))} 个入口候选，脚本/任务入口可能分散。", "fix": "按生产入口、测试入口、一次性脚本分组。"})
+    if len(report.get("script_files", [])) > len(report.get("source_files", [])) * 0.45 and report.get("source_files"):
+        risks.append({"level": "P2", "kind": "脚本占比高", "text": "scripts/ 文件占比较高，容易把一次性实验路径误读成主链路。", "fix": "先标记核心脚本和边缘脚本。"})
+    if not report.get("test_files"):
+        risks.append({"level": "P2", "kind": "测试入口缺失", "text": "未发现 tests/ 或 test_* 文件，行为判断缺少回归证据。", "fix": "阅读后若要施工，先补最小验收命令。"})
+    for profile in profiles[:10]:
+        label, _ = coupling_label(profile)
+        if label == "高":
+            risks.append(
+                {
+                    "level": "P1",
+                    "kind": f"{profile['module']} 耦合偏高",
+                    "text": f"该模块同时依赖 {len(profile['depends_on'])} 个模块，并被 {len(profile['depended_by'])} 个模块依赖。",
+                    "fix": "下一轮追该模块的入口和数据契约，先判断是否只是编排层。"
+                }
+            )
+    return risks[:8]
+
+
+def render_risks(risks: list[dict]) -> str:
+    if not risks:
+        return '<div class="note good"><b>未发现明显静态断点。</b><p>这不代表没有问题，只表示首轮探针没有足够证据列出风险。</p></div>'
+    return "\n".join(
+        f"""
+        <div class="issue">
+          <span>{h(item['level'])}</span>
+          <h3>{h(item['kind'])}</h3>
+          <p>{h(item['text'])}</p>
+          <small>{h(item['fix'])}</small>
+        </div>
+        """
+        for item in risks
+    )
+
+
+def render_dual_routes(route: list[dict], report: dict, scan_root: Path, linkable: bool) -> str:
+    beginner = []
+    for idx, item in enumerate(route[:5], start=1):
+        beginner.append(
+            f"<li><b>{path_link(item['path'], scan_root, linkable)}</b><span>{h(item['purpose'])}；暂时跳过：{h(item['skip'])}</span></li>"
+        )
+    expert_symbols = report.get("symbol_samples", [])[:5]
+    expert = []
+    for item in expert_symbols:
+        location = f"{item['path']}:{item['line']}"
+        expert.append(
+            f"<li><b>{path_link(location, scan_root, linkable)}</b><span>{h(symbol_signature(item))}</span></li>"
+        )
+    return f"""
+    <div class="route-panel">
+      <h3>新手路线：建立全局认知</h3>
+      <ol>{''.join(beginner) or '<li>先补入口文件或 README。</li>'}</ol>
+    </div>
+    <div class="route-panel expert">
+      <h3>高手路线：直接看核心对象</h3>
+      <ol>{''.join(expert) or '<li>先补充符号抽样。</li>'}</ol>
+    </div>
+    """
+
+
+def render_contract_candidates(report: dict, scan_root: Path, linkable: bool) -> str:
+    candidates = [
+        item for item in report.get("symbol_samples", [])
+        if re.search(r"(Input|Output|Config|State|Result|Summary|Schema|Payload|Request|Response)", item.get("name", ""))
+    ][:12]
+    rows = []
+    for item in candidates:
+        rows.append(
+            f"""
+            <tr>
+              <td>{code(item['name'])}</td>
+              <td>{h(item.get('kind', 'symbol'))}</td>
+              <td>{path_link(f"{item['path']}:{item['line']}", scan_root, linkable)}</td>
+              <td>{h(infer_symbol_note(item))}</td>
+            </tr>
+            """
+        )
+    if not rows:
+        return '<p class="muted">未识别到明显的 Input/Output/Config/State 等契约对象。</p>'
+    return f"""
+    <table>
+      <thead><tr><th>对象</th><th>类型</th><th>位置</th><th>下一步检查</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+    """
+
+
+def render_config_table(report: dict) -> str:
+    items = unique(report.get("manifests", []) + report.get("config_files", []))[:16]
+    if not items:
+        return '<p class="muted">未发现 manifest 或配置文件。</p>'
+    rows = []
+    for rel in items:
+        kind = "manifest" if Path(rel).name in repo_probe.MANIFEST_NAMES else "config"
+        rows.append(f"<tr><td>{code(rel)}</td><td>{h(kind)}</td><td>检查默认值、环境变量覆盖和启动参数是否一致。</td></tr>")
+    return f"""
+    <table>
+      <thead><tr><th>文件</th><th>类型</th><th>阅读目标</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
     """
 
 
@@ -825,6 +1241,731 @@ def render_html(report: dict, scan_root: Path, title: str, subtitle: str | None)
 """
 
 
+def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | None) -> str:
+    route = build_reading_route(report)
+    profiles = build_module_profiles(report)
+    risks = build_risks(report, profiles)
+    evidence_rows = build_evidence_rows(report, route)
+    project_hint = read_project_hint(scan_root, report.get("readme_files", []))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lifecycle = report.get("extract_root_lifecycle", "")
+    linkable = not lifecycle.startswith("auto-cleaned")
+    source_label = report.get("source_archive") or report.get("root")
+    zip_stats = report.get("zip_stats", {})
+    primary = first_language(report)
+    entries = report.get("entry_candidates", [])
+    source_files = report.get("source_files", [])
+    symbol_count = len(report.get("symbol_samples", []))
+    edge_count = len(report.get("import_edge_samples", []))
+    manifest_count = len(report.get("manifests", [])) + len(report.get("config_files", []))
+
+    first_symbol = choose_symbol(report)
+    focus_target = first_symbol["name"] if first_symbol else "首个核心对象"
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{h(title)} · {REPORT_HEADING}</title>
+  <style>
+    :root {{
+      --bg: #f6f7f2;
+      --ink: #171717;
+      --muted: #5e666d;
+      --panel: #ffffff;
+      --line: #d8ddd6;
+      --nav: #111827;
+      --red: #bd2d35;
+      --teal: #0f766e;
+      --blue: #245a9a;
+      --gold: #946200;
+      --green: #27724c;
+      --soft-red: #fff0ef;
+      --soft-teal: #e8f5f2;
+      --soft-blue: #edf4ff;
+      --soft-gold: #fff7df;
+      --shadow: 0 18px 42px rgba(17, 24, 39, .09);
+    }}
+    * {{ box-sizing: border-box; }}
+    html {{ scroll-behavior: smooth; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(17, 24, 39, .045) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(17, 24, 39, .035) 1px, transparent 1px),
+        var(--bg);
+      background-size: 30px 30px;
+      font: 15px/1.68 "Segoe UI", "Microsoft YaHei", sans-serif;
+    }}
+    a {{ color: var(--blue); text-decoration: none; border-bottom: 1px solid rgba(36, 90, 154, .35); }}
+    a:hover {{ border-bottom-color: var(--blue); }}
+    code {{
+      display: inline-block;
+      max-width: 100%;
+      padding: 2px 7px;
+      border: 1px solid rgba(17, 24, 39, .12);
+      border-radius: 5px;
+      background: #f4f6f6;
+      color: #101418;
+      font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
+      word-break: break-word;
+    }}
+    .layout {{
+      display: grid;
+      grid-template-columns: 288px minmax(0, 1fr);
+      min-height: 100vh;
+    }}
+    aside {{
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 24px;
+      background: var(--nav);
+      color: #fff;
+      overflow: auto;
+    }}
+    .brand {{
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 28px;
+      line-height: 1.08;
+    }}
+    .side-note {{
+      margin: 14px 0 24px;
+      color: #bbc4d2;
+      font-size: 13px;
+    }}
+    nav a {{
+      display: block;
+      margin: 7px 0;
+      padding: 8px 10px;
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: 7px;
+      color: #f8fafc;
+      background: rgba(255, 255, 255, .035);
+    }}
+    nav a:hover {{ background: rgba(255, 255, 255, .11); border-color: rgba(255, 255, 255, .22); }}
+    main {{ padding: 34px min(5vw, 72px) 72px; }}
+    .hero {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) 360px;
+      gap: 24px;
+      align-items: stretch;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }}
+    .hero-text {{ padding: 34px; }}
+    .eyebrow {{
+      display: inline-flex;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: var(--soft-red);
+      color: var(--red);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }}
+    h1, h2, h3 {{ margin: 0; line-height: 1.18; letter-spacing: 0; }}
+    h1 {{
+      margin-top: 14px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 52px;
+      max-width: 920px;
+    }}
+    .subtitle {{ margin: 16px 0 0; color: var(--muted); font-size: 17px; max-width: 860px; }}
+    .action-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }}
+    button, .button-link {{
+      appearance: none;
+      border: 1px solid var(--nav);
+      border-radius: 7px;
+      padding: 9px 12px;
+      background: var(--nav);
+      color: #fff;
+      font: 700 13px/1 "Segoe UI", "Microsoft YaHei", sans-serif;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }}
+    button:hover, .button-link:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(17, 24, 39, .16);
+      border-bottom-color: var(--nav);
+    }}
+    button.secondary, .button-link.secondary {{
+      background: #fff;
+      color: var(--nav);
+      border-color: var(--line);
+    }}
+    .source-card {{
+      padding: 28px;
+      background: #fdfbf5;
+      border-left: 5px solid var(--red);
+      display: grid;
+      align-content: center;
+      gap: 10px;
+    }}
+    .source-card p {{ margin: 0; }}
+    .metrics {{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0 0;
+    }}
+    .metric {{
+      min-height: 106px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .92);
+    }}
+    .metric span, .metric small {{ display: block; color: var(--muted); }}
+    .metric strong {{ display: block; margin: 7px 0 4px; font-size: 28px; line-height: 1; }}
+    section {{
+      margin-top: 28px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 8px 24px rgba(17, 24, 39, .04);
+      transition: opacity .45s ease, transform .45s ease, box-shadow .25s ease;
+    }}
+    section.visible {{
+      opacity: 1;
+      transform: translateY(0);
+    }}
+    section.focus-pulse {{
+      animation: pulseFocus 1.15s ease;
+    }}
+    @keyframes pulseFocus {{
+      0% {{ box-shadow: 0 0 0 0 rgba(189, 45, 53, .28); }}
+      70% {{ box-shadow: 0 0 0 16px rgba(189, 45, 53, 0); }}
+      100% {{ box-shadow: 0 8px 24px rgba(17, 24, 39, .04); }}
+    }}
+    section > header {{
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 13px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }}
+    section h2 {{ font-family: Georgia, "Times New Roman", serif; font-size: 30px; }}
+    .tag {{
+      align-self: start;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: #fbfcfa;
+      font-size: 12px;
+      white-space: nowrap;
+    }}
+    .parse-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .parse-cell {{
+      min-height: 128px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }}
+    .parse-cell strong, .parse-cell span {{ display: block; }}
+    .parse-cell span {{ margin: 8px 0; font-weight: 800; color: var(--teal); }}
+    .parse-cell.todo span {{ color: var(--gold); }}
+    .parse-cell p {{ margin: 0; color: var(--muted); }}
+    .two-col {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }}
+    .fact-table th {{
+      width: 180px;
+      color: var(--gold);
+      background: #f7f6ef;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      font-size: 14px;
+    }}
+    th, td {{
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }}
+    th {{ background: #f1f4f2; color: #263238; }}
+    tr:last-child td, tr:last-child th {{ border-bottom: 0; }}
+    .diagram {{
+      margin: 0;
+      padding: 22px;
+      border: 1px solid #252a31;
+      border-radius: 8px;
+      background: #101418;
+      color: #e6edf3;
+      overflow-x: auto;
+      font: 13px/1.55 "Cascadia Mono", Consolas, monospace;
+    }}
+    .function-group {{
+      margin-top: 16px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfb;
+    }}
+    .function-group summary {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      cursor: pointer;
+      color: var(--blue);
+      font-weight: 800;
+      font-size: 17px;
+    }}
+    .function-group summary::after {{
+      content: "展开";
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--soft-blue);
+      color: var(--blue);
+      font-size: 12px;
+    }}
+    .function-group[open] summary::after {{ content: "收起"; }}
+    .function-group small {{ display: block; margin-top: 3px; color: var(--muted); font-weight: 400; }}
+    .toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin: 16px 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8faf8;
+    }}
+    .toolbar input {{
+      min-width: min(420px, 100%);
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 9px 11px;
+      font: inherit;
+      background: #fff;
+    }}
+    .toolbar .count {{
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }}
+    .func-card {{
+      padding: 13px 14px;
+      margin: 10px 0;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--blue);
+      border-radius: 8px;
+      background: #fff;
+      transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    }}
+    .func-card:hover {{
+      transform: translateX(2px);
+      border-color: #9eb9da;
+      background: #fbfdff;
+    }}
+    .func-card.is-hidden {{ display: none; }}
+    .function-group.no-match {{ display: none; }}
+    }}
+    .func-card .sig {{
+      color: var(--blue);
+      font: 13px/1.45 "Cascadia Mono", Consolas, monospace;
+      word-break: break-word;
+    }}
+    .func-card p {{ margin: 6px 0; color: var(--ink); }}
+    .func-card .meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .func-card .meta span {{
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--soft-blue);
+      color: var(--blue);
+      font-weight: 800;
+    }}
+    .timeline {{
+      display: grid;
+      gap: 12px;
+      position: relative;
+      padding-left: 14px;
+    }}
+    .timeline::before {{
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: var(--line);
+    }}
+    .timeline-item {{
+      position: relative;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }}
+    .timeline-item::before {{
+      content: "";
+      position: absolute;
+      left: -15px;
+      top: 20px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--red);
+    }}
+    .timeline-item h3 {{ font-size: 16px; }}
+    .timeline-item p {{ margin: 6px 0; }}
+    .timeline-item small {{ color: var(--muted); }}
+    .issue {{
+      margin: 12px 0;
+      padding: 14px 16px;
+      border: 1px solid #f0d1c8;
+      border-left: 4px solid var(--red);
+      border-radius: 8px;
+      background: var(--soft-red);
+    }}
+    .issue span {{
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--red);
+      font-weight: 800;
+      font-size: 12px;
+    }}
+    .issue h3 {{ margin-top: 6px; font-size: 17px; }}
+    .issue p {{ margin: 7px 0; }}
+    .issue small {{ color: var(--green); font-weight: 700; }}
+    .note {{
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft-teal);
+    }}
+    .route-panel {{
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }}
+    .route-panel.expert {{ background: #fbf7ff; }}
+    .route-panel h3 {{ color: var(--teal); margin-bottom: 10px; }}
+    .route-panel.expert h3 {{ color: #7750a6; }}
+    .route-panel ol {{ margin: 0; padding-left: 22px; }}
+    .route-panel li {{ margin: 10px 0; }}
+    .route-panel span {{ display: block; color: var(--muted); }}
+    .coupling {{
+      display: inline-block;
+      min-width: 34px;
+      text-align: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 12px;
+    }}
+    .coupling.cool {{ background: var(--soft-teal); color: var(--teal); }}
+    .coupling.warm {{ background: var(--soft-gold); color: var(--gold); }}
+    .coupling.hot {{ background: var(--soft-red); color: var(--red); }}
+    .level {{
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--soft-blue);
+      color: var(--blue);
+      font-weight: 800;
+      font-size: 12px;
+    }}
+    .next-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .question {{
+      min-height: 128px;
+      padding: 16px;
+      border-radius: 8px;
+      background: #111827;
+      color: #fff;
+    }}
+    .question strong {{ color: #ffe08a; }}
+    .muted {{ color: var(--muted); }}
+    footer {{ margin-top: 24px; color: var(--muted); font-size: 13px; }}
+    @media (max-width: 1100px) {{
+      .layout {{ display: block; }}
+      aside {{ position: static; height: auto; }}
+      main {{ padding: 20px; }}
+      .hero, .metrics, .parse-grid, .two-col, .next-grid {{ grid-template-columns: 1fr; }}
+      h1 {{ font-size: 34px; }}
+    }}
+    @media print {{
+      aside {{ display: none; }}
+      .layout {{ display: block; }}
+      body {{ background: #fff; }}
+      main {{ padding: 0; }}
+      section, .hero {{ box-shadow: none; break-inside: avoid; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <p class="brand">Source Architecture Dossier</p>
+      <p class="side-note">一次全解析：先建立全局、模块、函数、配置、风险和阅读路线，再选择下钻点。</p>
+      <nav>
+        <a href="#project">项目识别</a>
+        <a href="#coverage">解析覆盖</a>
+        <a href="#layers">L3 全局分层</a>
+        <a href="#modules">L2 模块关系</a>
+        <a href="#functions">L1 逐函数地图</a>
+        <a href="#golden">Golden Path</a>
+        <a href="#contracts">配置与契约</a>
+        <a href="#risks">问题诊断</a>
+        <a href="#route">阅读路线</a>
+        <a href="#evidence">证据表</a>
+        <a href="#next">下一问</a>
+      </nav>
+    </aside>
+    <main>
+      <div class="hero">
+        <div class="hero-text">
+          <span class="eyebrow">one-pass source analysis</span>
+          <h1>{h(title)}</h1>
+          <p class="subtitle">{h(subtitle or project_hint)}</p>
+          <div class="action-row">
+            <button type="button" data-action="focus-golden">高亮主路径</button>
+            <button type="button" class="secondary" data-action="expand-functions">展开全部函数</button>
+            <button type="button" class="secondary" data-action="collapse-functions">收起函数地图</button>
+            <button type="button" class="secondary" data-action="toggle-evidence">显示/隐藏证据</button>
+          </div>
+        </div>
+        <div class="source-card">
+          <p><b>报告类型</b><br>{h(REPORT_HEADING)}</p>
+          <p><b>生成时间</b><br>{h(now)}</p>
+          <p><b>输入</b><br>{code(source_label)}</p>
+          <p><b>扫描根</b><br>{code(report.get('root', scan_root))}</p>
+          <p><b>zip 成员</b><br>{h(zip_stats.get('members', 'n/a'))}</p>
+        </div>
+      </div>
+
+      <div class="metrics">
+        {render_metric("扫描文件", report.get("file_count_scanned", 0), "受 --max-files 限制")}
+        {render_metric("源码文件", len(source_files), "按语言扩展名")}
+        {render_metric("符号样本", symbol_count, "函数/类/方法")}
+        {render_metric("依赖边", edge_count, "静态导入样本")}
+        {render_metric("配置线索", manifest_count, "manifest + config")}
+      </div>
+
+      <section id="project">
+        <header>
+          <h2>项目识别卡</h2>
+          <span class="tag">先把系统身份定下来</span>
+        </header>
+        {render_project_table(report, project_hint, primary, profiles)}
+      </section>
+
+      <section id="coverage">
+        <header>
+          <h2>一次全解析覆盖矩阵</h2>
+          <span class="tag">不是只给 3-5 个文件</span>
+        </header>
+        <div class="parse-grid">{render_full_parse_matrix(report, profiles, risks)}</div>
+      </section>
+
+      <section id="layers">
+        <header>
+          <h2>L3 全局分层架构</h2>
+          <span class="tag">从入口层到验证层</span>
+        </header>
+        <p class="muted">这个图只画“层”，不把所有文件塞进一张网。每层下面的具体函数在 L1 展开。</p>
+        {render_layer_diagram(profiles, report)}
+      </section>
+
+      <section id="modules">
+        <header>
+          <h2>L2 模块关系图</h2>
+          <span class="tag">静态依赖 + 模块边界</span>
+        </header>
+        {render_module_table(profiles)}
+      </section>
+
+      <section id="functions">
+        <header>
+          <h2>L1 逐函数地图</h2>
+          <span class="tag">每个模块先列可下钻对象</span>
+        </header>
+        <p class="muted">这里不是完整语义证明，而是一次全解析的函数索引：你可以直接挑一个函数继续要求 L1 输入/输出/副作用图。</p>
+        <div class="toolbar">
+          <input id="symbolSearch" type="search" placeholder="筛选函数、类、模块或路径" aria-label="筛选函数、类、模块或路径">
+          <button type="button" class="secondary" data-action="clear-search">清空筛选</button>
+          <span class="count" id="symbolCount">显示全部符号</span>
+        </div>
+        {render_function_groups(profiles, scan_root, linkable)}
+      </section>
+
+      <section id="golden">
+        <header>
+          <h2>Golden Path 核心路径识别</h2>
+          <span class="tag">先读主链，再读边缘</span>
+        </header>
+        <div class="timeline">{render_golden_path(route, report)}</div>
+      </section>
+
+      <section id="contracts">
+        <header>
+          <h2>配置依赖与接口契约检查</h2>
+          <span class="tag">默认值、字段、输入输出</span>
+        </header>
+        <div class="two-col">
+          <div>
+            <h3>配置入口</h3>
+            {render_config_table(report)}
+          </div>
+          <div>
+            <h3>契约对象候选</h3>
+            {render_contract_candidates(report, scan_root, linkable)}
+          </div>
+        </div>
+      </section>
+
+      <section id="risks">
+        <header>
+          <h2>问题诊断：坏味道与架构断点</h2>
+          <span class="tag">只列有静态证据的候选</span>
+        </header>
+        {render_risks(risks)}
+      </section>
+
+      <section id="route">
+        <header>
+          <h2>阅读路线建议</h2>
+          <span class="tag">新手视角 + 高手视角</span>
+        </header>
+        <div class="two-col">{render_dual_routes(route, report, scan_root, linkable)}</div>
+      </section>
+
+      <section id="evidence">
+        <header>
+          <h2>证据表</h2>
+          <span class="tag">每个判断都要能回到路径</span>
+        </header>
+        {render_evidence(evidence_rows)}
+      </section>
+
+      <section id="next">
+        <header>
+          <h2>下一步提问模板</h2>
+          <span class="tag">让阅读继续沿结构推进</span>
+        </header>
+        <div class="next-grid">
+          <div class="question"><strong>继续下钻</strong><br>请追踪 {h(focus_target)}，给我输入、输出、副作用、上游和下游。</div>
+          <div class="question"><strong>横向比较</strong><br>请比较两个模块是否在做重复的事，只给有证据的结论和最小验证方式。</div>
+          <div class="question"><strong>施工前</strong><br>基于这份全解析报告，把目标转成施工边界卡，先不要改代码。</div>
+        </div>
+      </section>
+
+      <footer>
+        本报告来自静态源码扫描和启发式归类。它的目标是一次性建立完整阅读地图，不替代运行测试、精确调用链搜索和人工源码复核。
+      </footer>
+    </main>
+  </div>
+  <script>
+    const sections = document.querySelectorAll('section');
+    const reveal = new IntersectionObserver((entries) => {{
+      for (const entry of entries) {{
+        if (entry.isIntersecting) {{
+          entry.target.classList.add('visible');
+          reveal.unobserve(entry.target);
+        }}
+      }}
+    }}, {{ threshold: 0.08 }});
+    sections.forEach((section) => reveal.observe(section));
+
+    const cards = Array.from(document.querySelectorAll('.func-card'));
+    const groups = Array.from(document.querySelectorAll('.function-group'));
+    const search = document.getElementById('symbolSearch');
+    const count = document.getElementById('symbolCount');
+
+    function applyFilter() {{
+      const q = (search?.value || '').trim().toLowerCase();
+      let visible = 0;
+      for (const card of cards) {{
+        const hit = !q || (card.dataset.symbolText || '').includes(q);
+        card.classList.toggle('is-hidden', !hit);
+        if (hit) visible++;
+      }}
+      for (const group of groups) {{
+        const hasHit = Array.from(group.querySelectorAll('.func-card')).some(card => !card.classList.contains('is-hidden'));
+        group.classList.toggle('no-match', !hasHit);
+        if (q && hasHit) group.open = true;
+      }}
+      if (count) count.textContent = q ? `显示 ${{visible}} / ${{cards.length}} 个符号` : `显示全部 ${{cards.length}} 个符号`;
+    }}
+    search?.addEventListener('input', applyFilter);
+    applyFilter();
+
+    function pulse(id) {{
+      const target = document.getElementById(id);
+      if (!target) return;
+      target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+      target.classList.remove('focus-pulse');
+      window.setTimeout(() => target.classList.add('focus-pulse'), 240);
+    }}
+
+    document.addEventListener('click', (event) => {{
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const action = button.dataset.action;
+      if (action === 'focus-golden') pulse('golden');
+      if (action === 'expand-functions') groups.forEach(group => group.open = true);
+      if (action === 'collapse-functions') groups.forEach(group => group.open = false);
+      if (action === 'clear-search' && search) {{
+        search.value = '';
+        applyFilter();
+        search.focus();
+      }}
+      if (action === 'toggle-evidence') {{
+        const table = document.querySelector('#evidence table');
+        if (table) table.hidden = !table.hidden;
+        pulse('evidence');
+      }}
+    }});
+  </script>
+</body>
+</html>
+"""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", nargs="?", default=".", help="Repository directory or source .zip")
@@ -854,7 +1995,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_output_in_repo=args.allow_output_in_repo,
         )
         title = args.title or source.resolve().stem or REPORT_HEADING
-        document = render_html(report, scan_root=scan_root, title=title, subtitle=args.subtitle)
+        document = render_full_html(report, scan_root=scan_root, title=title, subtitle=args.subtitle)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(document, encoding="utf-8")
         print(f"HTML report written: {output_path}")

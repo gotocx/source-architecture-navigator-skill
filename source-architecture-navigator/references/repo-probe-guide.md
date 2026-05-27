@@ -42,16 +42,16 @@ python scripts/repo_probe.py <repo-path> --output <outside-or-user-approved-path
 
 默认拒绝把 `--output` 写入被扫描仓库或 zip 解包根目录内。只有用户明确要这样做时，才使用 `--allow-output-in-repo`。
 
-## HTML 报告
+## 一次全解析 HTML 报告
 
-首轮源码阅读需要给用户一个可打开、可复盘的产物时，使用 HTML 报告生成器：
+首轮源码阅读需要给用户一个可打开、可交互、可复盘的全解析产物时，使用 HTML 报告生成器：
 
 ```bash
 python scripts/render_navigation_html.py <repo-path> --output <outside-analysis-dir>/source_navigation_report.html
 python scripts/render_navigation_html.py <source.zip> --output <outside-analysis-dir>/source_navigation_report.html --title "<project-name>"
 ```
 
-HTML 报告同样默认拒绝写入被扫描仓库。zip 输入默认只保留相对证据路径；若希望报告中的文件链接可点击，使用 `--extract-to <outside-analysis-dir>/source` 或 `--keep-temp`。
+HTML 报告同样默认拒绝写入被扫描仓库。zip 输入默认只保留相对证据路径；若希望报告中的文件链接可点击，使用 `--extract-to <outside-analysis-dir>/source` 或 `--keep-temp`。报告应包含函数筛选、模块展开/收起、主路径高亮和证据表显隐。
 
 ## 输出解读
 

@@ -130,6 +130,7 @@ class SymbolSample:
     kind: str
     name: str
     line: int
+    signature: str = ""
 
 
 @dataclass
@@ -225,6 +226,58 @@ def edge_score(item: ImportEdge) -> tuple[int, str, str]:
     return (-score, item.source, item.target)
 
 
+def format_annotation(node: ast.AST | None) -> str:
+    if node is None:
+        return ""
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return ""
+
+
+def format_args(args: ast.arguments) -> str:
+    parts: list[str] = []
+    all_args = list(args.posonlyargs) + list(args.args)
+    defaults = [None] * (len(all_args) - len(args.defaults)) + list(args.defaults)
+    for arg, default in zip(all_args, defaults):
+        text = arg.arg
+        annotation = format_annotation(arg.annotation)
+        if annotation:
+            text += f": {annotation}"
+        if default is not None:
+            text += "=..."
+        parts.append(text)
+    if args.vararg:
+        parts.append("*" + args.vararg.arg)
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        text = arg.arg
+        annotation = format_annotation(arg.annotation)
+        if annotation:
+            text += f": {annotation}"
+        if default is not None:
+            text += "=..."
+        parts.append(text)
+    if args.kwarg:
+        parts.append("**" + args.kwarg.arg)
+    return ", ".join(parts)
+
+
+def function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+    text = f"{prefix}{node.name}({format_args(node.args)})"
+    returns = format_annotation(node.returns)
+    if returns:
+        text += f" -> {returns}"
+    return text
+
+
+def class_signature(node: ast.ClassDef) -> str:
+    bases = [format_annotation(base) for base in node.bases]
+    bases = [base for base in bases if base]
+    suffix = f"({', '.join(bases)})" if bases else ""
+    return f"class {node.name}{suffix}"
+
+
 def parse_python(path: Path, root: Path) -> tuple[list[SymbolSample], list[ImportEdge]]:
     rel = safe_rel(path, root)
     try:
@@ -234,12 +287,25 @@ def parse_python(path: Path, root: Path) -> tuple[list[SymbolSample], list[Impor
 
     symbols: list[SymbolSample] = []
     edges: list[ImportEdge] = []
-    for node in ast.walk(tree):
+    for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            symbols.append(SymbolSample(rel, "function", node.name, node.lineno))
+            symbols.append(SymbolSample(rel, "function", node.name, node.lineno, function_signature(node)))
         elif isinstance(node, ast.ClassDef):
-            symbols.append(SymbolSample(rel, "class", node.name, node.lineno))
-        elif isinstance(node, ast.Import):
+            symbols.append(SymbolSample(rel, "class", node.name, node.lineno, class_signature(node)))
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    symbols.append(
+                        SymbolSample(
+                            rel,
+                            "method",
+                            f"{node.name}.{child.name}",
+                            child.lineno,
+                            function_signature(child),
+                        )
+                    )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
             for alias in node.names:
                 edges.append(ImportEdge(rel, alias.name))
         elif isinstance(node, ast.ImportFrom) and node.module:
@@ -261,7 +327,7 @@ def parse_text_symbols(path: Path, root: Path) -> tuple[list[SymbolSample], list
         if match:
             name = match.group(1) or match.group(2)
             kind = "class" if "class " in line else "function"
-            symbols.append(SymbolSample(rel, kind, name, line_no))
+            symbols.append(SymbolSample(rel, kind, name, line_no, name))
         for target in IMPORT_RE.findall(line):
             edges.append(ImportEdge(rel, target))
     return symbols, edges
@@ -273,6 +339,11 @@ def build_report(root: Path, max_files: int) -> dict:
     dir_counts = Counter()
     manifests: list[str] = []
     readmes: list[str] = []
+    source_files: list[str] = []
+    config_files: list[str] = []
+    test_files: list[str] = []
+    script_files: list[str] = []
+    line_counts: dict[str, int] = {}
     entries: list[str] = []
     symbols: list[SymbolSample] = []
     edges: list[ImportEdge] = []
@@ -282,14 +353,27 @@ def build_report(root: Path, max_files: int) -> dict:
         language = LANG_BY_SUFFIX.get(path.suffix.lower())
         if language:
             language_counts[language] += 1
+            source_files.append(rel)
         top = rel.split("/", 1)[0] if "/" in rel else "(root files)"
         dir_counts[top] += 1
         if path.name in MANIFEST_NAMES:
             manifests.append(rel)
         if path.name.lower().startswith("readme") and path.suffix.lower() in {".md", ".txt", ".rst"}:
             readmes.append(rel)
+        if path.suffix.lower() in {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env", ".env.example"} or "config" in path.name.lower():
+            config_files.append(rel)
+        if rel.lower().startswith("tests/") or "/tests/" in rel.lower() or path.name.lower().startswith("test_") or path.name.lower().endswith("_test.py"):
+            test_files.append(rel)
+        if rel.lower().startswith("scripts/"):
+            script_files.append(rel)
         if any(pattern.search(rel) for pattern in ENTRY_NAME_PATTERNS):
             entries.append(rel)
+
+        if path.suffix.lower() in TEXT_SUFFIXES:
+            try:
+                line_counts[rel] = len(path.read_text(encoding="utf-8", errors="ignore").splitlines())
+            except OSError:
+                pass
 
         if path.suffix.lower() == ".py":
             file_symbols, file_edges = parse_python(path, root)
@@ -311,9 +395,14 @@ def build_report(root: Path, max_files: int) -> dict:
         "top_directories": dict(dir_counts.most_common(12)),
         "manifests": manifests[:40],
         "readme_files": readmes[:20],
+        "source_files": source_files[:400],
+        "config_files": config_files[:120],
+        "test_files": test_files[:120],
+        "script_files": script_files[:120],
+        "line_counts": dict(sorted(line_counts.items(), key=lambda item: (-item[1], item[0]))[:200]),
         "entry_candidates": entries[:50],
-        "symbol_samples": [asdict(item) for item in symbols[:80]],
-        "import_edge_samples": [asdict(item) for item in edges[:120]],
+        "symbol_samples": [asdict(item) for item in symbols[:260]],
+        "import_edge_samples": [asdict(item) for item in edges[:360]],
     }
 
 
@@ -400,6 +489,8 @@ def to_markdown(report: dict) -> str:
     section("Top directories", report["top_directories"])
     section("Manifests", report["manifests"])
     section("Readme files", report.get("readme_files", []))
+    section("Config files", report.get("config_files", []))
+    section("Test files", report.get("test_files", []))
     section("Entry candidates", report["entry_candidates"])
 
     lines.append("## Symbol samples")

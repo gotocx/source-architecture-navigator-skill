@@ -1,6 +1,6 @@
 ---
 name: source-architecture-navigator
-description: Read and explain source-code architecture without polluting a repository. Use when the user wants to understand a codebase, trace a function, class, component, route, API, configuration, or data field, build layered Mermaid maps, classify messy code questions into understanding, location, call-chain, architecture, bug, requirement, refactor, implementation, or review modes, produce guided reading routes, or identify evidence-based architecture risks before changing code.
+description: Read and explain source-code architecture without polluting a repository. Use when the user wants to understand a codebase, trace a function, class, component, route, API, configuration, or data field, build layered maps, classify messy code questions into understanding, location, call-chain, architecture, bug, requirement, refactor, implementation, or review modes, render one-pass full HTML source analysis reports, produce guided reading routes, or identify evidence-based architecture risks before changing code.
 version: 1.0.0
 ---
 
@@ -9,7 +9,7 @@ version: 1.0.0
 <!-- @类型: Skill 概览 -->
 <!-- @目的: 让源码阅读从碎片问答变成可导航、可复盘、低污染的架构理解流程 -->
 
-> **一句话**: 把混乱的源码问题先分类，再用局部函数地图、调用链、数据流和分层架构图逐步建立理解。
+> **一句话**: 把混乱的源码问题先分类，先产出一次全解析报告，再用局部函数地图、调用链、数据流和分层架构图逐步下钻。
 > **版本**: v1.0.0
 > **用途**: 阅读仓库架构、追踪局部对象、整理阅读路线、识别有证据的架构问题，并在进入修改前明确边界。
 > **适用范围**: 代码仓库或源码 zip 阅读、功能链路理解、调用关系追踪、接口/字段/配置流分析、仓库体检、重构前观察。
@@ -47,7 +47,7 @@ version: 1.0.0
 - `references/output-templates.md`: 回答模板、函数地图模板、体检报告模板和下一问模板。
 - `references/repo-probe-guide.md`: 只读仓库探针脚本的使用边界。
 - `scripts/repo_probe.py`: 只读仓库概览脚本，默认只输出到终端，不写入目标仓库。
-- `scripts/render_navigation_html.py`: 静态 HTML 源码阅读报告生成器，默认要求输出到目标仓库外。
+- `scripts/render_navigation_html.py`: 静态 HTML 源码一次全解析报告生成器，默认要求输出到目标仓库外，包含交互筛选、展开/收起和主路径高亮。
 - `assets/source-architecture-navigator.html`: 面向人的 HTML 展示页，用于快速理解本 skill 的工作方式。
 
 ## 决策矩阵
@@ -188,18 +188,19 @@ python scripts/repo_probe.py .
 - @动作: 若用户准备改代码，先跳到"施工边界桥接"工作流。
 - @动作: 若当前回答已经形成新的问题树，简短复盘：已知、未知、下一步。
 
-### @步骤6: 生成 HTML 阅读报告
+### @步骤6: 生成一次全解析 HTML 报告
 
 <!-- @类型: 操作步骤 -->
 <!-- @优先级: 推荐 -->
 <!-- @依赖: step-reading-route -->
-<!-- @验证点: 首轮源码导航有一个可打开、可复盘、含证据表的 HTML 文件 -->
-<!-- @验证方式: HTML 包含 L0/L1/L2/L3、阅读路线、证据表、下一问，且不写入被扫描仓库 -->
+<!-- @验证点: 首轮源码导航有一个可打开、可交互、可复盘、含证据表的 HTML 文件 -->
+<!-- @验证方式: HTML 包含项目识别、解析覆盖、L3/L2/L1、Golden Path、配置/契约、风险、阅读路线、证据表、下一问，且不写入被扫描仓库 -->
 <!-- @ID: step-html-report -->
 
-- @动作: 当用户提供仓库或源码 zip 并希望"读源码/看架构/画地图/生成报告"时，优先生成静态 HTML 报告；聊天回答只保留摘要、结论和 HTML 路径。
+- @动作: 当用户提供仓库或源码 zip 并希望"读源码/看架构/画地图/生成报告"时，优先生成一次全解析静态 HTML 报告；聊天回答只保留摘要、结论和 HTML 路径。
 - @动作: HTML 输出默认放到仓库外的分析目录或用户指定目录；不要写入被扫描仓库，除非用户明确允许。
-- @动作: 先用脚本自动生成首轮 L0-L3 导航骨架，再在聊天中指出下一轮最值得下钻的函数、字段或接口。
+- @动作: 一次全解析必须覆盖：项目识别卡、解析覆盖矩阵、L3 全局分层、L2 模块关系、L1 逐函数地图、Golden Path、配置/契约、风险候选、新手/高手路线、证据表和下一问。
+- @动作: HTML 应包含交互元素：模块展开/收起、函数筛选、主路径高亮、证据表显隐；不要只生成静态文字堆叠。
 
 ```bash
 python scripts/render_navigation_html.py <repo-or-source.zip> --output <outside-analysis-dir>/source_navigation_report.html --title "<project-name>"

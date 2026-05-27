@@ -25,7 +25,7 @@ python scripts/validate_skill.py --skill .
 
 The HTML overview is at `source-architecture-navigator/assets/source-architecture-navigator.html`.
 
-Generate a source-reading HTML report:
+Generate a one-pass source analysis HTML report:
 
 ```bash
 python source-architecture-navigator/scripts/render_navigation_html.py <repo-or-source.zip> --output <outside-analysis-dir>/source_navigation_report.html
