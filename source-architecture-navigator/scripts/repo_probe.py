@@ -272,6 +272,7 @@ def build_report(root: Path, max_files: int) -> dict:
     language_counts = Counter()
     dir_counts = Counter()
     manifests: list[str] = []
+    readmes: list[str] = []
     entries: list[str] = []
     symbols: list[SymbolSample] = []
     edges: list[ImportEdge] = []
@@ -285,6 +286,8 @@ def build_report(root: Path, max_files: int) -> dict:
         dir_counts[top] += 1
         if path.name in MANIFEST_NAMES:
             manifests.append(rel)
+        if path.name.lower().startswith("readme") and path.suffix.lower() in {".md", ".txt", ".rst"}:
+            readmes.append(rel)
         if any(pattern.search(rel) for pattern in ENTRY_NAME_PATTERNS):
             entries.append(rel)
 
@@ -307,6 +310,7 @@ def build_report(root: Path, max_files: int) -> dict:
         "language_counts": dict(language_counts.most_common()),
         "top_directories": dict(dir_counts.most_common(12)),
         "manifests": manifests[:40],
+        "readme_files": readmes[:20],
         "entry_candidates": entries[:50],
         "symbol_samples": [asdict(item) for item in symbols[:80]],
         "import_edge_samples": [asdict(item) for item in edges[:120]],
@@ -395,6 +399,7 @@ def to_markdown(report: dict) -> str:
     section("Language counts", report["language_counts"])
     section("Top directories", report["top_directories"])
     section("Manifests", report["manifests"])
+    section("Readme files", report.get("readme_files", []))
     section("Entry candidates", report["entry_candidates"])
 
     lines.append("## Symbol samples")

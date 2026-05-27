@@ -202,7 +202,7 @@
 
     .flow {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 10px;
       align-items: stretch;
     }
@@ -382,14 +382,15 @@
     <section id="workflow">
       <h2>主流程</h2>
       <p class="section-lead">每轮都从模式和问题分类开始。只有当局部证据足够清晰时，才向全局合并。</p>
-      <div class="flow">
-        <div class="step"><span class="num">1</span><strong>问题分类</strong><p>理解、定位、调用链、架构、bug、需求、重构、施工、复盘。</p></div>
-        <div class="step"><span class="num">2</span><strong>读模式保护</strong><p>默认只读，不插打印，不生成无关分析文件。</p></div>
-        <div class="step"><span class="num">3</span><strong>仓库体征</strong><p>入口、manifest、核心目录、边缘路径先看清。</p></div>
-        <div class="step"><span class="num">4</span><strong>分层地图</strong><p>函数图、调用链、功能流、全局层逐步上卷。</p></div>
-        <div class="step"><span class="num">5</span><strong>下一问</strong><p>给可复制的问题模板，让探索像问路一样继续。</p></div>
-      </div>
-    </section>
+        <div class="flow">
+          <div class="step"><span class="num">1</span><strong>问题分类</strong><p>理解、定位、调用链、架构、bug、需求、重构、施工、复盘。</p></div>
+          <div class="step"><span class="num">2</span><strong>读模式保护</strong><p>默认只读，不插打印，不生成无关分析文件。</p></div>
+          <div class="step"><span class="num">3</span><strong>仓库体征</strong><p>入口、manifest、核心目录、边缘路径先看清。</p></div>
+          <div class="step"><span class="num">4</span><strong>分层地图</strong><p>函数图、调用链、功能流、全局层逐步上卷。</p></div>
+          <div class="step"><span class="num">5</span><strong>下一问</strong><p>给可复制的问题模板，让探索像问路一样继续。</p></div>
+          <div class="step"><span class="num">6</span><strong>HTML 报告</strong><p>首轮仓库导航产出可打开、可复盘的静态阅读报告。</p></div>
+        </div>
+      </section>
 
     <section>
       <h2>地图不是装饰</h2>
@@ -426,6 +427,7 @@
             <li>地图</li>
             <li>路线</li>
             <li>下一问</li>
+            <li>HTML 报告路径</li>
           </ol>
         </div>
         <div class="route-body">
@@ -434,6 +436,7 @@
             <li>说明本轮是在理解、定位、追链路，还是施工前整理。</li>
             <li>列出证据路径，不把推断写成事实。</li>
             <li>每次只给 3-5 个最值得读的文件。</li>
+            <li>首轮仓库或 zip 导航优先生成 HTML 报告，聊天里只给摘要和路径。</li>
             <li>如果要改代码，先给施工边界卡：目标、涉及文件、不涉及文件、风险、验收、回滚。</li>
           </ul>
           <pre class="codebox"><code>问题类别: 调用链类
@@ -441,6 +444,7 @@
 证据: path/to/file:line
 地图: 一张 L1 或 L2 小图
 阅读路线: 3-5 个文件
+HTML: outside-analysis-dir/source_navigation_report.html
 下一问: 继续下钻 / 横向比较 / 进入施工前</code></pre>
         </div>
       </div>

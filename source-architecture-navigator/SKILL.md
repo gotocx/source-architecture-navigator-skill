@@ -47,6 +47,7 @@ version: 1.0.0
 - `references/output-templates.md`: 回答模板、函数地图模板、体检报告模板和下一问模板。
 - `references/repo-probe-guide.md`: 只读仓库探针脚本的使用边界。
 - `scripts/repo_probe.py`: 只读仓库概览脚本，默认只输出到终端，不写入目标仓库。
+- `scripts/render_navigation_html.py`: 静态 HTML 源码阅读报告生成器，默认要求输出到目标仓库外。
 - `assets/source-architecture-navigator.html`: 面向人的 HTML 展示页，用于快速理解本 skill 的工作方式。
 
 ## 决策矩阵
@@ -186,6 +187,23 @@ python scripts/repo_probe.py .
 - @动作: 给出可直接复制的下一问，覆盖继续下钻、横向追踪、进入风险判断三类。
 - @动作: 若用户准备改代码，先跳到"施工边界桥接"工作流。
 - @动作: 若当前回答已经形成新的问题树，简短复盘：已知、未知、下一步。
+
+### @步骤6: 生成 HTML 阅读报告
+
+<!-- @类型: 操作步骤 -->
+<!-- @优先级: 推荐 -->
+<!-- @依赖: step-reading-route -->
+<!-- @验证点: 首轮源码导航有一个可打开、可复盘、含证据表的 HTML 文件 -->
+<!-- @验证方式: HTML 包含 L0/L1/L2/L3、阅读路线、证据表、下一问，且不写入被扫描仓库 -->
+<!-- @ID: step-html-report -->
+
+- @动作: 当用户提供仓库或源码 zip 并希望"读源码/看架构/画地图/生成报告"时，优先生成静态 HTML 报告；聊天回答只保留摘要、结论和 HTML 路径。
+- @动作: HTML 输出默认放到仓库外的分析目录或用户指定目录；不要写入被扫描仓库，除非用户明确允许。
+- @动作: 先用脚本自动生成首轮 L0-L3 导航骨架，再在聊天中指出下一轮最值得下钻的函数、字段或接口。
+
+```bash
+python scripts/render_navigation_html.py <repo-or-source.zip> --output <outside-analysis-dir>/source_navigation_report.html --title "<project-name>"
+```
 
 ## @工作流: 单对象追踪
 
