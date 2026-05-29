@@ -1288,13 +1288,18 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       --soft-blue: #edf5f8;
       --soft-amber: #fff5df;
       --shadow: 0 18px 45px rgba(28, 24, 18, .12);
-      --note-base: #e3e5e7;
-      --note-hi: #fafafd;
-      --note-lo: #b6b9ba;
-      --note-shadow-dark: #b6b9ba;
-      --note-shadow-light: #fafafd;
-      --note-grad-a: #b6b9ba;
-      --note-grad-b: #f4f6f8;
+      --note-base: #ece4d5;
+      --note-hi: #fffaf0;
+      --note-lo: #c4b8a4;
+      --note-shadow-dark: rgba(94, 73, 44, .24);
+      --note-shadow-light: rgba(255, 250, 240, .96);
+      --note-grad-a: #d4c7b2;
+      --note-grad-b: #fff3dd;
+      --note-glass-a: rgba(212, 199, 178, .56);
+      --note-glass-b: rgba(255, 243, 221, .74);
+      --note-glass-base: rgba(236, 228, 213, .68);
+      --note-ring: rgba(36, 107, 134, .18);
+      --note-ink: #172125;
     }}
     body.theme-night {{
       --paper: #191a18;
@@ -1313,13 +1318,18 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       --soft-blue: #202f35;
       --soft-amber: #382d1e;
       --shadow: 0 0 0 rgba(0,0,0,0);
-      --note-base: #25282b;
-      --note-hi: #373b40;
-      --note-lo: #151719;
-      --note-shadow-dark: #111315;
-      --note-shadow-light: #373b40;
-      --note-grad-a: #151719;
-      --note-grad-b: #35393e;
+      --note-base: #272720;
+      --note-hi: #39382f;
+      --note-lo: #15160f;
+      --note-shadow-dark: rgba(0, 0, 0, .58);
+      --note-shadow-light: rgba(112, 94, 61, .24);
+      --note-grad-a: #171810;
+      --note-grad-b: #393427;
+      --note-glass-a: rgba(23, 24, 16, .58);
+      --note-glass-b: rgba(57, 52, 39, .72);
+      --note-glass-base: rgba(39, 39, 32, .66);
+      --note-ring: rgba(127, 183, 200, .18);
+      --note-ink: #f2eadc;
     }}
     * {{ box-sizing: border-box; }}
     html {{ scroll-behavior: smooth; }}
@@ -1919,12 +1929,15 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       border: 0;
       border-radius: 16px;
       padding: 0 18px;
-      background-color: var(--note-base);
-      background-image: linear-gradient(145deg, var(--note-grad-b), var(--note-grad-a));
+      background-color: var(--note-glass-base);
+      background-image: linear-gradient(145deg, var(--note-glass-b), var(--note-glass-a));
       box-shadow:
         inset 8px 8px 16px var(--note-shadow-dark),
-        inset -8px -8px 16px var(--note-shadow-light);
-      color: var(--ink);
+        inset -8px -8px 16px var(--note-shadow-light),
+        inset 0 0 0 1px var(--note-ring);
+      color: var(--note-ink);
+      -webkit-backdrop-filter: blur(9px) saturate(1.08);
+      backdrop-filter: blur(9px) saturate(1.08);
       font: 600 16px/1.35 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
       outline: 0;
     }}
@@ -1939,12 +1952,15 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       padding: 15px 18px;
       border: 0;
       border-radius: 16px;
-      background-color: var(--note-base);
-      background-image: linear-gradient(145deg, var(--note-grad-a), var(--note-grad-b));
+      background-color: var(--note-glass-base);
+      background-image: linear-gradient(145deg, var(--note-glass-a), var(--note-glass-b));
       box-shadow:
         8px 8px 16px var(--note-shadow-dark),
-        -8px -8px 16px var(--note-shadow-light);
-      color: var(--ink);
+        -8px -8px 16px var(--note-shadow-light),
+        0 0 0 1px var(--note-ring);
+      color: var(--note-ink);
+      -webkit-backdrop-filter: blur(9px) saturate(1.08);
+      backdrop-filter: blur(9px) saturate(1.08);
       cursor: text;
       font: 600 15px/1.45 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
       overflow: hidden;
@@ -2221,6 +2237,24 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       window.setTimeout(() => target.classList.add('focus-pulse'), 240);
     }}
 
+    const storeFallback = new Map();
+    function storeGet(key, fallback = '') {{
+      try {{
+        const value = window.localStorage.getItem(key);
+        return value === null ? fallback : value;
+      }} catch (error) {{
+        return storeFallback.has(key) ? storeFallback.get(key) : fallback;
+      }}
+    }}
+
+    function storeSet(key, value) {{
+      try {{
+        window.localStorage.setItem(key, value);
+      }} catch (error) {{
+        storeFallback.set(key, value);
+      }}
+    }}
+
     const themeKey = 'source-nav-theme:' + location.pathname + ':' + document.title;
     function applyTheme(theme) {{
       document.body.classList.toggle('theme-night', theme === 'night');
@@ -2228,7 +2262,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         button.textContent = theme === 'night' ? '日间' : '夜间';
       }});
     }}
-    applyTheme(localStorage.getItem(themeKey) || 'day');
+    applyTheme(storeGet(themeKey, 'day'));
 
     const notesKey = 'source-nav-notes:' + location.pathname + ':' + document.title;
     const notesList = document.getElementById('notesList');
@@ -2241,7 +2275,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function loadNotes() {{
       try {{
-        notes = JSON.parse(localStorage.getItem(notesKey) || '[]');
+        notes = JSON.parse(storeGet(notesKey, '[]') || '[]');
         if (!Array.isArray(notes)) notes = [];
       }} catch (error) {{
         notes = [];
@@ -2249,7 +2283,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     }}
 
     function saveNotes() {{
-      localStorage.setItem(notesKey, JSON.stringify(notes));
+      storeSet(notesKey, JSON.stringify(notes));
     }}
 
     function scheduleSave() {{
@@ -2263,6 +2297,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     function elementFromNode(node) {{
       if (!node) return document.body;
       return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    }}
+
+    function eventClosest(event, selector) {{
+      const element = elementFromNode(event.target);
+      return element && element.closest ? element.closest(selector) : null;
     }}
 
     function sectionLabel(node) {{
@@ -2577,8 +2616,40 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     window.addEventListener('scroll', placeAllLayerItems, {{ passive: true }});
     document.addEventListener('toggle', () => window.requestAnimationFrame(placeAllLayerItems), true);
 
+    const noteIgnoreSelector = '[data-no-note], .report-nav, .hero-actions, button, input, textarea, select, summary';
+    let lastPointerNoteAt = 0;
+
+    function handleNoteTrigger(event) {{
+      if (eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector)) return false;
+      if (activeNoteHost) {{
+        const current = activeNoteHost;
+        const nextHost = noteHost(event.target);
+        finishInlineNote(current);
+        if (nextHost === current) return true;
+      }}
+      event.preventDefault();
+      event.stopPropagation();
+      const selection = window.getSelection();
+      const quote = cleanText(selection?.toString(), 500);
+      const range = quote && selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+      const node = range?.commonAncestorContainer || event.target;
+      openInlineNote({{
+        quote,
+        range,
+        node,
+        clientX: event.clientX,
+        clientY: event.clientY
+      }});
+      return true;
+    }}
+
+    document.addEventListener('pointerup', (event) => {{
+      if (typeof event.button === 'number' && event.button !== 0) return;
+      if (handleNoteTrigger(event)) lastPointerNoteAt = Date.now();
+    }}, true);
+
     document.addEventListener('click', (event) => {{
-      const button = event.target.closest('[data-action]');
+      const button = eventClosest(event, '[data-action]');
       if (button) {{
         const action = button.dataset.action;
         if (action === 'focus-golden') pulse('golden');
@@ -2599,33 +2670,19 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         }}
         if (action === 'toggle-theme') {{
           const next = document.body.classList.contains('theme-night') ? 'day' : 'night';
-          localStorage.setItem(themeKey, next);
+          storeSet(themeKey, next);
           applyTheme(next);
         }}
         if (action === 'copy-notes') copyNotes();
         if (action === 'download-notes') downloadNotes();
         return;
       }}
-      if (event.target.closest('[data-no-note], .report-nav, .hero-actions, button, input, textarea, select, summary')) return;
-      if (activeNoteHost) {{
-        const current = activeNoteHost;
-        const nextHost = noteHost(event.target);
-        finishInlineNote(current);
-        if (nextHost === current) return;
+      if (Date.now() - lastPointerNoteAt < 450) {{
+        event.preventDefault();
+        return;
       }}
-      event.preventDefault();
-      const selection = window.getSelection();
-      const quote = cleanText(selection?.toString(), 500);
-      const range = quote && selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
-      const node = range?.commonAncestorContainer || event.target;
-      openInlineNote({{
-        quote,
-        range,
-        node,
-        clientX: event.clientX,
-        clientY: event.clientY
-      }});
-    }});
+      handleNoteTrigger(event);
+    }}, true);
   </script>
 </body>
 </html>
