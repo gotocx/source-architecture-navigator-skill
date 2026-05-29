@@ -1810,6 +1810,62 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       box-shadow: 4px 4px 0 rgba(17,17,17,.14);
     }}
     .question strong {{ color: #f5ead4; }}
+    .todo-item {{
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      cursor: pointer;
+      transition: opacity .18s ease, transform .18s ease, border-color .18s ease;
+    }}
+    .todo-check {{
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }}
+    .todo-box {{
+      position: relative;
+      display: block;
+      width: 30px;
+      height: 30px;
+      border: 2px solid #f5ead4;
+      border-radius: 7px;
+      background:
+        linear-gradient(145deg, rgba(255,250,240,.18), rgba(17,17,17,.2)),
+        #25221a;
+      box-shadow:
+        inset 4px 4px 8px rgba(0,0,0,.38),
+        inset -4px -4px 8px rgba(255,250,240,.13);
+    }}
+    .todo-check:checked + .todo-box {{
+      border-color: var(--green);
+      background:
+        linear-gradient(145deg, rgba(237,244,238,.78), rgba(95,139,90,.7)),
+        var(--green);
+      box-shadow:
+        4px 4px 10px rgba(0,0,0,.28),
+        -3px -3px 8px rgba(255,250,240,.14);
+    }}
+    .todo-check:checked + .todo-box::after {{
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 7px;
+      width: 13px;
+      height: 8px;
+      border-left: 3px solid #181713;
+      border-bottom: 3px solid #181713;
+      transform: rotate(-45deg);
+    }}
+    .todo-item.is-done {{
+      opacity: .72;
+      border-color: var(--green);
+    }}
+    .todo-item.is-done .todo-text {{
+      text-decoration: line-through;
+      text-decoration-thickness: 2px;
+      text-decoration-color: rgba(237,244,238,.7);
+    }}
     .reader-notes {{
       background:
         linear-gradient(135deg, rgba(237, 244, 238, .72), rgba(255, 250, 240, .92)),
@@ -2245,10 +2301,22 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           <h2>下一步提问模板</h2>
           <span class="tag">让阅读继续沿结构推进</span>
         </header>
-        <div class="next-grid">
-          <div class="question"><strong>继续下钻</strong><br>请追踪 {h(focus_target)}，给我输入、输出、副作用、上游和下游。</div>
-          <div class="question"><strong>横向比较</strong><br>请比较两个模块是否在做重复的事，只给有证据的结论和最小验证方式。</div>
-          <div class="question"><strong>施工前</strong><br>基于这份全解析报告，把目标转成施工边界卡，先不要改代码。</div>
+        <div class="next-grid todo-list" id="todoList" data-no-note>
+          <label class="question todo-item" data-todo-id="drill">
+            <input class="todo-check" type="checkbox" aria-label="完成继续下钻">
+            <span class="todo-box" aria-hidden="true"></span>
+            <span class="todo-text"><strong>继续下钻</strong><br>请追踪 {h(focus_target)}，给我输入、输出、副作用、上游和下游。</span>
+          </label>
+          <label class="question todo-item" data-todo-id="compare">
+            <input class="todo-check" type="checkbox" aria-label="完成横向比较">
+            <span class="todo-box" aria-hidden="true"></span>
+            <span class="todo-text"><strong>横向比较</strong><br>请比较两个模块是否在做重复的事，只给有证据的结论和最小验证方式。</span>
+          </label>
+          <label class="question todo-item" data-todo-id="boundary">
+            <input class="todo-check" type="checkbox" aria-label="完成施工前边界">
+            <span class="todo-box" aria-hidden="true"></span>
+            <span class="todo-text"><strong>施工前</strong><br>基于这份全解析报告，把目标转成施工边界卡，先不要改代码。</span>
+          </label>
         </div>
       </section>
 
@@ -2326,6 +2394,35 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       }});
     }}
     applyTheme(storeGet(themeKey, 'day'));
+
+    const todoKey = 'source-nav-todos:' + location.pathname + ':' + document.title;
+    const todoChecks = Array.from(document.querySelectorAll('.todo-check'));
+    function loadTodos() {{
+      let saved = {{}};
+      try {{
+        saved = JSON.parse(storeGet(todoKey, '{{}}') || '{{}}');
+      }} catch (error) {{
+        saved = {{}};
+      }}
+      for (const input of todoChecks) {{
+        const item = input.closest('.todo-item');
+        const id = item?.dataset.todoId || '';
+        input.checked = Boolean(saved[id]);
+        item?.classList.toggle('is-done', input.checked);
+      }}
+    }}
+    function saveTodos() {{
+      const saved = {{}};
+      for (const input of todoChecks) {{
+        const item = input.closest('.todo-item');
+        const id = item?.dataset.todoId || '';
+        if (id) saved[id] = input.checked;
+        item?.classList.toggle('is-done', input.checked);
+      }}
+      storeSet(todoKey, JSON.stringify(saved));
+    }}
+    todoChecks.forEach(input => input.addEventListener('change', saveTodos));
+    loadTodos();
 
     const notesKey = 'source-nav-notes:' + location.pathname + ':' + document.title;
     const notesList = document.getElementById('notesList');
@@ -2783,6 +2880,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
       let note = noteForHost(host, context.quote || '');
       const point = notePointFromContext(host, context);
+      const isNewNote = !note;
       if (!note) {{
         note = {{
           id: 'note-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
@@ -2795,7 +2893,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         }};
         notes.push(note);
       }}
-      if (point) {{
+      const missingAnchor = !Number.isFinite(note.relX) || !Number.isFinite(note.relY);
+      if (point && (isNewNote || missingAnchor)) {{
         note.relX = point.relX;
         note.relY = point.relY;
       }}
