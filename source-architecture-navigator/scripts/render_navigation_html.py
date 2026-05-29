@@ -1299,6 +1299,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       --note-glass-b: rgba(255, 243, 221, .42);
       --note-glass-base: rgba(236, 228, 213, .34);
       --note-ring: rgba(36, 107, 134, .22);
+      --note-tether: rgba(36, 107, 134, .46);
       --note-ink: #172125;
     }}
     body.theme-night {{
@@ -1329,6 +1330,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       --note-glass-b: rgba(57, 52, 39, .48);
       --note-glass-base: rgba(39, 39, 32, .40);
       --note-ring: rgba(127, 183, 200, .24);
+      --note-tether: rgba(127, 183, 200, .48);
       --note-ink: #f2eadc;
     }}
     * {{ box-sizing: border-box; }}
@@ -1922,6 +1924,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       border: 0;
       border-radius: 16px;
       background: transparent;
+      touch-action: none;
     }}
     .inline-note-pad input {{
       display: block;
@@ -1961,10 +1964,30 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       color: var(--note-ink);
       -webkit-backdrop-filter: blur(4px) saturate(1.12);
       backdrop-filter: blur(4px) saturate(1.12);
-      cursor: text;
+      cursor: grab;
       font: 600 15px/1.45 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
       overflow: hidden;
       text-overflow: ellipsis;
+      touch-action: none;
+      transition: box-shadow .16s ease, transform .16s ease, background-color .16s ease;
+    }}
+    .inline-note-pad.is-dragging,
+    .inline-note-view.is-dragging {{
+      cursor: grabbing;
+      z-index: 34;
+      transform: translateY(-1px);
+    }}
+    .inline-note-pad.is-linked input {{
+      box-shadow:
+        inset 8px 8px 16px var(--note-shadow-dark),
+        inset -8px -8px 16px var(--note-shadow-light),
+        inset 0 0 0 1px var(--note-tether);
+    }}
+    .inline-note-view.is-linked {{
+      box-shadow:
+        9px 9px 18px var(--note-shadow-dark),
+        -7px -7px 16px var(--note-shadow-light),
+        0 0 0 1px var(--note-tether);
     }}
     .inline-note-view:empty {{
       display: none;
@@ -1979,6 +2002,46 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     #noteLayer .inline-note-pad,
     #noteLayer .inline-note-view {{
       pointer-events: auto;
+    }}
+    #noteTethers {{
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }}
+    .note-tether-line {{
+      stroke: var(--note-tether);
+      stroke-width: 1.35;
+      stroke-linecap: round;
+      stroke-dasharray: 5 7;
+      opacity: .82;
+    }}
+    .note-anchor-dot {{
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 30%, rgba(255,250,240,.95), transparent 0 32%, transparent 54%),
+        var(--note-tether);
+      box-shadow:
+        0 0 0 6px rgba(36, 107, 134, .08),
+        0 0 18px rgba(36, 107, 134, .18);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }}
+    .note-anchor-highlight {{
+      position: absolute;
+      border-radius: 5px;
+      background: rgba(36, 107, 134, .13);
+      box-shadow:
+        inset 0 0 0 1px rgba(36, 107, 134, .18),
+        0 0 14px rgba(255, 250, 240, .34);
+      -webkit-backdrop-filter: blur(2px) saturate(1.06);
+      backdrop-filter: blur(2px) saturate(1.06);
+      pointer-events: none;
     }}
     mark.reader-highlight {{
       background: linear-gradient(transparent 50%, rgba(177, 109, 34, .35) 50%);
@@ -2013,7 +2076,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
   </style>
 </head>
 <body>
-  <div id="noteLayer" data-no-note></div>
+  <div id="noteLayer" data-no-note><svg id="noteTethers" data-no-note aria-hidden="true"></svg></div>
   <header>
     <div>
       <div class="eyebrow"><span class="pin"></span> Source Architecture Navigator</div>
@@ -2269,8 +2332,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     const noteExportMode = document.getElementById('noteExportMode');
     const notesExport = document.getElementById('notesExport');
     const noteLayer = document.getElementById('noteLayer');
+    const noteTethers = document.getElementById('noteTethers');
     let notes = [];
     let activeNoteHost = null;
+    let activeAnchorNoteId = '';
+    let dragState = null;
     let saveTimer = 0;
 
     function loadNotes() {{
@@ -2323,19 +2389,45 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     }}
 
     const noteHostSelector = '.func-card, .issue, .route-panel, .question, .timeline-item, .parse-cell, td, li, article, section, body > header';
-    const allNoteHosts = Array.from(document.querySelectorAll(noteHostSelector))
-      .filter(host => !host.closest('[data-no-note]'));
+    const allNoteHosts = [document.body, ...Array.from(document.querySelectorAll(noteHostSelector))
+      .filter(host => !host.closest('[data-no-note]'))];
     const hostIds = new WeakMap();
     const hostsById = new Map();
-    allNoteHosts.forEach((host, index) => {{
-      const id = 'host-' + index;
+
+    function stableHostId(host) {{
+      if (!host || host === document.body) return 'host-body';
+      const parts = [];
+      let node = host;
+      while (node && node !== document.body && node.nodeType === Node.ELEMENT_NODE) {{
+        const parent = node.parentElement;
+        if (!parent) break;
+        const siblings = Array.from(parent.children).filter(child => child.tagName === node.tagName);
+        const marker = Array.from(node.classList || [])
+          .filter(name => ['func-card', 'issue', 'route-panel', 'question', 'timeline-item', 'parse-cell', 'metric', 'map-board'].includes(name))
+          .slice(0, 2)
+          .join('.');
+        parts.push(`${{node.tagName.toLowerCase()}}${{marker ? '.' + marker : ''}}:${{Math.max(0, siblings.indexOf(node))}}`);
+        node = parent;
+      }}
+      const raw = parts.reverse().join('>');
+      let hash = 2166136261;
+      for (let index = 0; index < raw.length; index += 1) {{
+        hash ^= raw.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }}
+      return 'host-' + (hash >>> 0).toString(36);
+    }}
+
+    allNoteHosts.forEach(host => {{
+      const id = stableHostId(host);
       hostIds.set(host, id);
       hostsById.set(id, host);
     }});
 
     function noteHost(node) {{
       const element = elementFromNode(node);
-      const host = element?.closest(noteHostSelector) || element || document.body;
+      let host = element?.closest(noteHostSelector) || element?.closest('section, article, main, body') || document.body;
+      if (host === document.documentElement) host = document.body;
       ensureHostId(host);
       return host;
     }}
@@ -2344,7 +2436,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       if (!host) return '';
       let id = hostIds.get(host);
       if (!id) {{
-        id = 'host-extra-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        id = stableHostId(host);
         hostIds.set(host, id);
         hostsById.set(id, host);
       }}
@@ -2405,8 +2497,10 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       const hasPoint = note && Number.isFinite(note.relX) && Number.isFinite(note.relY);
       const anchorX = rect.left + (hasPoint ? rect.width * note.relX : 14);
       const anchorY = rect.top + (hasPoint ? rect.height * note.relY : 12);
-      const left = clamp(anchorX - 18, 16, window.innerWidth - width - 16);
-      const top = clamp(anchorY - 28, 12, window.innerHeight - 72);
+      const offsetX = Number(note?.dx) || 0;
+      const offsetY = Number(note?.dy) || 0;
+      const left = clamp(anchorX - 18 + offsetX, 16, window.innerWidth - width - 16);
+      const top = clamp(anchorY - 28 + offsetY, 12, window.innerHeight - 72);
       return {{ left, top, width }};
     }}
 
@@ -2432,11 +2526,106 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         const host = hostById(item.dataset.hostId || '');
         if (host) placeLayerItem(item, host);
       }});
+      if (activeAnchorNoteId) showAnchorEffects(activeAnchorNoteId);
+    }}
+
+    function noteById(noteId) {{
+      return notes.find(note => note.id === noteId) || null;
+    }}
+
+    function anchorPointForNote(host, note) {{
+      const rect = host.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      const relX = Number.isFinite(note?.relX) ? note.relX : 0;
+      const relY = Number.isFinite(note?.relY) ? note.relY : 0;
+      const x = rect.left + rect.width * relX;
+      const y = rect.top + rect.height * relY;
+      if (x < -24 || x > window.innerWidth + 24 || y < -24 || y > window.innerHeight + 24) return null;
+      return {{ x, y }};
+    }}
+
+    function clearAnchorVisuals() {{
+      noteLayer?.querySelectorAll('.note-anchor-dot, .note-anchor-highlight').forEach(item => item.remove());
+      noteLayer?.querySelectorAll('.inline-note-pad, .inline-note-view').forEach(item => item.classList.remove('is-linked'));
+      if (noteTethers) noteTethers.replaceChildren();
+    }}
+
+    function hideAnchorEffects(noteId = '') {{
+      if (noteId && activeAnchorNoteId && activeAnchorNoteId !== noteId) return;
+      activeAnchorNoteId = '';
+      clearAnchorVisuals();
+    }}
+
+    function quoteRectsForNote(note, host) {{
+      const quote = note?.quote || '';
+      if (!quote || !host) return [];
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {{
+        acceptNode(node) {{
+          const parent = node.parentElement;
+          if (!parent || parent.closest('[data-no-note], script, style')) return NodeFilter.FILTER_REJECT;
+          return node.nodeValue.includes(quote) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        }}
+      }});
+      const textNode = walker.nextNode();
+      if (!textNode) return [];
+      const start = textNode.nodeValue.indexOf(quote);
+      if (start < 0) return [];
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + quote.length);
+      return Array.from(range.getClientRects()).filter(rect => rect.width > 4 && rect.height > 4).slice(0, 6);
+    }}
+
+    function showAnchorEffects(noteId, element = null) {{
+      const note = noteById(noteId);
+      const host = hostById(note?.hostId || '');
+      const target = element || noteLayer?.querySelector(`[data-note-id="${{cssEscape(noteId)}}"]`);
+      if (!note || !host || !target || target.hidden) {{
+        hideAnchorEffects(noteId);
+        return;
+      }}
+      activeAnchorNoteId = noteId;
+      clearAnchorVisuals();
+      target.classList.add('is-linked');
+      const anchor = anchorPointForNote(host, note);
+      if (!anchor) return;
+
+      for (const rect of quoteRectsForNote(note, host)) {{
+        const highlight = document.createElement('div');
+        highlight.className = 'note-anchor-highlight';
+        highlight.dataset.noNote = 'true';
+        highlight.style.left = Math.max(0, rect.left - 2) + 'px';
+        highlight.style.top = Math.max(0, rect.top - 1) + 'px';
+        highlight.style.width = rect.width + 4 + 'px';
+        highlight.style.height = rect.height + 2 + 'px';
+        noteLayer.append(highlight);
+      }}
+
+      const dot = document.createElement('div');
+      dot.className = 'note-anchor-dot';
+      dot.dataset.noNote = 'true';
+      dot.style.left = anchor.x + 'px';
+      dot.style.top = anchor.y + 'px';
+      noteLayer.append(dot);
+
+      if (noteTethers) {{
+        const rect = target.getBoundingClientRect();
+        const startX = clamp(anchor.x, rect.left + 8, rect.right - 8);
+        const startY = clamp(anchor.y, rect.top + 8, rect.bottom - 8);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.classList.add('note-tether-line');
+        line.setAttribute('x1', String(startX));
+        line.setAttribute('y1', String(startY));
+        line.setAttribute('x2', String(anchor.x));
+        line.setAttribute('y2', String(anchor.y));
+        noteTethers.append(line);
+      }}
     }}
 
     function removeInlineEditors() {{
       noteLayer?.querySelectorAll('.inline-note-pad').forEach(editor => editor.remove());
       activeNoteHost = null;
+      hideAnchorEffects();
     }}
 
     function highlightRange(range, id) {{
@@ -2465,6 +2654,76 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       }}).join('\\n\\n');
     }}
 
+    function attachNoteInteraction(element, note, host, openOnTap = false) {{
+      element.addEventListener('mouseenter', () => showAnchorEffects(note.id, element));
+      element.addEventListener('mouseleave', () => {{
+        if (!dragState && openOnTap) hideAnchorEffects(note.id);
+      }});
+      element.addEventListener('click', (event) => {{
+        if (element.dataset.wasDragged === 'true') {{
+          event.preventDefault();
+          event.stopPropagation();
+          element.dataset.wasDragged = 'false';
+        }}
+      }});
+      element.addEventListener('pointerdown', (event) => {{
+        if (typeof event.button === 'number' && event.button !== 0) return;
+        dragState = {{
+          element,
+          note,
+          host,
+          openOnTap,
+          startX: event.clientX,
+          startY: event.clientY,
+          startDx: Number(note.dx) || 0,
+          startDy: Number(note.dy) || 0,
+          moved: false
+        }};
+        element.setPointerCapture?.(event.pointerId);
+        showAnchorEffects(note.id, element);
+      }});
+      element.addEventListener('pointermove', (event) => {{
+        if (!dragState || dragState.element !== element) return;
+        const deltaX = event.clientX - dragState.startX;
+        const deltaY = event.clientY - dragState.startY;
+        if (!dragState.moved && Math.hypot(deltaX, deltaY) < 5) return;
+        dragState.moved = true;
+        event.preventDefault();
+        note.dx = dragState.startDx + deltaX;
+        note.dy = dragState.startDy + deltaY;
+        note.updatedAt = new Date().toISOString();
+        element.classList.add('is-dragging');
+        placeLayerItem(element, host, note);
+        showAnchorEffects(note.id, element);
+      }});
+      element.addEventListener('pointerup', (event) => {{
+        if (!dragState || dragState.element !== element) return;
+        const moved = dragState.moved;
+        element.releasePointerCapture?.(event.pointerId);
+        element.classList.remove('is-dragging');
+        dragState = null;
+        if (moved) {{
+          event.preventDefault();
+          event.stopPropagation();
+          element.dataset.wasDragged = 'true';
+          saveNotes();
+          if (notesExport) notesExport.value = buildExport();
+          showAnchorEffects(note.id, element);
+          return;
+        }}
+        if (openOnTap) {{
+          event.preventDefault();
+          event.stopPropagation();
+          openInlineNote({{ node: host, quote: note.quote || '', range: null }});
+        }}
+      }});
+      element.addEventListener('pointercancel', () => {{
+        element.classList.remove('is-dragging');
+        dragState = null;
+        hideAnchorEffects(note.id);
+      }});
+    }}
+
     function renderNotes() {{
       if (!notesList) return;
       const sorted = sortedNotes().filter(note => cleanText(note.text));
@@ -2491,10 +2750,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           view.dataset.noteId = note.id;
           view.dataset.hostId = note.hostId || '';
           view.textContent = note.text;
-          view.addEventListener('click', (event) => {{
-            event.stopPropagation();
-            openInlineNote({{ node: host, quote: note.quote || '', range: null }});
-          }});
+          attachNoteInteraction(view, note, host, true);
           noteLayer.append(view);
           placeLayerItem(view, host, note);
         }}
@@ -2567,6 +2823,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       }});
       noteLayer?.append(editor);
       placeLayerItem(editor, host, note);
+      attachNoteInteraction(editor, note, host, false);
+      showAnchorEffects(note.id, editor);
       input.focus();
     }}
 
