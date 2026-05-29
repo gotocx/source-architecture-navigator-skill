@@ -2977,13 +2977,17 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     let lastPointerNoteAt = 0;
 
     function handleNoteTrigger(event) {{
-      if (eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector)) return false;
+      const ignoredTarget = eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector);
       if (activeNoteHost) {{
         const current = activeNoteHost;
-        const nextHost = noteHost(event.target);
+        const editor = layerEditorForHost(current);
+        if (editor && editor.contains(event.target)) return false;
+        const nextHost = ignoredTarget ? null : noteHost(event.target);
         finishInlineNote(current);
+        if (ignoredTarget) return false;
         if (nextHost === current) return true;
       }}
+      if (ignoredTarget) return false;
       event.preventDefault();
       event.stopPropagation();
       const selection = window.getSelection();
