@@ -333,7 +333,7 @@ def parse_text_symbols(path: Path, root: Path) -> tuple[list[SymbolSample], list
     return symbols, edges
 
 
-def build_report(root: Path, max_files: int) -> dict:
+def build_report(root: Path, max_files: int, max_symbols: int = 1200) -> dict:
     files = collect_files(root, max_files=max_files)
     language_counts = Counter()
     dir_counts = Counter()
@@ -388,6 +388,8 @@ def build_report(root: Path, max_files: int) -> dict:
     symbols = sorted(symbols, key=symbol_score)
     edges = sorted(edges, key=edge_score)
 
+    symbol_limit = max_symbols if max_symbols and max_symbols > 0 else len(symbols)
+    symbol_samples = symbols[:symbol_limit]
     return {
         "root": str(root),
         "file_count_scanned": len(files),
@@ -401,7 +403,10 @@ def build_report(root: Path, max_files: int) -> dict:
         "script_files": script_files[:120],
         "line_counts": dict(sorted(line_counts.items(), key=lambda item: (-item[1], item[0]))[:200]),
         "entry_candidates": entries[:50],
-        "symbol_samples": [asdict(item) for item in symbols[:260]],
+        "symbol_total": len(symbols),
+        "symbol_limit": symbol_limit,
+        "symbol_truncated": len(symbols) > len(symbol_samples),
+        "symbol_samples": [asdict(item) for item in symbol_samples],
         "import_edge_samples": [asdict(item) for item in edges[:360]],
     }
 
@@ -519,6 +524,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("repo", nargs="?", default=".", help="Repository path")
     parser.add_argument("--max-files", type=int, default=8000, help="Maximum files to scan")
+    parser.add_argument("--max-symbols", type=int, default=1200, help="Maximum function/class/method symbols to keep in the report; use 0 for all")
     parser.add_argument("--json", action="store_true", help="Print JSON instead of Markdown")
     parser.add_argument("--output", help="Optional output path")
     parser.add_argument("--extract-to", help="Optional directory for zip extraction; must be outside the target repo")
@@ -561,7 +567,7 @@ def main(argv: list[str] | None = None) -> int:
             if output_path and is_relative_to(output_path, scan_root) and not args.allow_output_in_repo:
                 print("ERROR: --output is inside the scanned extract root; use a path outside it", file=sys.stderr)
                 return 1
-            report = build_report(scan_root, max_files=args.max_files)
+            report = build_report(scan_root, max_files=args.max_files, max_symbols=args.max_symbols)
             report["source_archive"] = str(input_path)
             report["extract_root"] = str(scan_root)
             report["extract_root_lifecycle"] = lifecycle
@@ -574,7 +580,7 @@ def main(argv: list[str] | None = None) -> int:
         if output_path and is_relative_to(output_path, input_path) and not args.allow_output_in_repo:
             print("ERROR: --output is inside the scanned repository; use a path outside it", file=sys.stderr)
             return 1
-        report = build_report(input_path, max_files=args.max_files)
+        report = build_report(input_path, max_files=args.max_files, max_symbols=args.max_symbols)
         text = json.dumps(report, ensure_ascii=False, indent=2) if args.json else to_markdown(report)
     else:
         print(f"ERROR: path is neither a directory nor a .zip archive: {input_path}", file=sys.stderr)

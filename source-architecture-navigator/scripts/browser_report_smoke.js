@@ -169,6 +169,38 @@ function pageSmoke() {
     await sleep(80);
     summary.sourceExport = (document.querySelector("#notesExport")?.value || "").trim();
 
+    const selectionTarget = document.querySelector(".func-facts span") || document.querySelector(".func-card .sig");
+    if (selectionTarget) {
+      selectionTarget.scrollIntoView({ block: "center" });
+      await sleep(80);
+      const walker = document.createTreeWalker(selectionTarget, NodeFilter.SHOW_TEXT);
+      const textNode = walker.nextNode();
+      if (textNode && textNode.textContent.trim().length >= 2) {
+        const start = Math.max(0, textNode.textContent.search(/\S/));
+        const end = Math.min(textNode.textContent.length, start + 4);
+        const range = document.createRange();
+        range.setStart(textNode, start);
+        range.setEnd(textNode, end);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        fireMouse("mouseup", selectionTarget, 1);
+        await sleep(180);
+        summary.selectionEditors = document.querySelectorAll(".inline-note-pad").length;
+        const selectionInput = document.querySelector(".inline-note-pad input");
+        if (selectionInput) {
+          selectionInput.value = "selection smoke note";
+          selectionInput.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        target2.scrollIntoView({ block: "center" });
+        await sleep(60);
+        fireMouse("click", target2, 1);
+        await sleep(140);
+        summary.selectionSaved = (document.querySelector("#notesExport")?.value || "").includes("selection smoke note");
+        sel.removeAllRanges();
+      }
+    }
+
     const search = document.querySelector("#symbolSearch");
     if (search) {
       search.value = "run_pair";
@@ -254,7 +286,7 @@ function reloadCheck() {
 
 function assertSmoke(summary, reloadSummary, dragSummary) {
   const failures = [];
-  if (summary.symbolRows < 1 || summary.symbolRows > 260) failures.push("symbol inventory count must be 1..260");
+  if (summary.symbolRows < 1) failures.push("symbol inventory must not be empty");
   if (!summary.hasInventory || !summary.hasCopyButton) failures.push("inventory or copy button missing");
   if (summary.singleClickEditors !== 0) failures.push("single click created a note editor");
   if (summary.doubleClickEditors !== 1) failures.push("double click did not create one note editor");
@@ -262,8 +294,9 @@ function assertSmoke(summary, reloadSummary, dragSummary) {
   if (summary.savedViews < 1) failures.push("saved note view did not render");
   if (!summary.orderedExport.startsWith("1. browser smoke note")) failures.push("ordered export format is wrong");
   if (!summary.sourceExport.includes("原文：") || !summary.sourceExport.includes("\n笔记：browser smoke note")) failures.push("source export format is wrong");
+  if (summary.selectionEditors !== 1 || !summary.selectionSaved) failures.push("text selection did not open and save a note");
   if (!dragSummary.dragPersisted) failures.push("drag offset was not persisted");
-  if (summary.filteredRows < 1 || !summary.filteredCountText.includes("/ 260")) failures.push("symbol filter did not operate on full inventory");
+  if (summary.filteredRows < 1 || !summary.filteredCountText.includes(`/ ${summary.symbolRows}`)) failures.push("symbol filter did not operate on full inventory");
   if (!summary.noOldExportLabels) failures.push("old export labels are still visible");
   if (!summary.noVisibleNoteHint) failures.push("visible note hint text is still present");
   if (reloadSummary.savedViewsAfterReload < 1 || !reloadSummary.exportAfterReload.includes("browser smoke note")) failures.push("note did not survive reload");

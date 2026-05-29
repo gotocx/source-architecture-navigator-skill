@@ -81,6 +81,7 @@ def prepare_report(
     source: Path,
     output_path: Path,
     max_files: int,
+    max_symbols: int,
     extract_to: str | None,
     keep_temp: bool,
     allow_output_in_repo: bool,
@@ -115,7 +116,7 @@ def prepare_report(
                 cleanup.cleanup()
             raise ValueError(f"failed to safely read zip: {exc}") from exc
 
-        report = repo_probe.build_report(scan_root, max_files=max_files)
+        report = repo_probe.build_report(scan_root, max_files=max_files, max_symbols=max_symbols)
         report["source_archive"] = str(input_path)
         report["extract_root"] = str(scan_root)
         report["extract_root_lifecycle"] = lifecycle
@@ -125,7 +126,7 @@ def prepare_report(
     if input_path.is_dir():
         if repo_probe.is_relative_to(output_path, input_path) and not allow_output_in_repo:
             raise ValueError("--output is inside the scanned repository; choose a path outside it")
-        return repo_probe.build_report(input_path, max_files=max_files), input_path, cleanup
+        return repo_probe.build_report(input_path, max_files=max_files, max_symbols=max_symbols), input_path, cleanup
 
     raise ValueError(f"path is neither a directory nor a .zip archive: {input_path}")
 
@@ -538,7 +539,7 @@ def render_symbol_facts(item: dict, profile: dict) -> str:
     upstream = ", ".join(profile.get("depended_by", [])[:3]) or "未发现模块级上游 import"
     downstream = ", ".join(depends[:3]) or "无明显模块级下游 import"
     facts = [
-        ("模块职责", role_for_module(profile["module"], profile)),
+        ("对象职责", object_role_hint(item, profile)),
         ("签名边界", symbol_signature(item)),
         ("输入", signature_inputs(item)),
         ("输出", signature_output(item)),
@@ -551,13 +552,58 @@ def render_symbol_facts(item: dict, profile: dict) -> str:
     )
 
 
+def object_role_hint(item: dict, profile: dict) -> str:
+    name = item.get("name", "")
+    lower = name.lower()
+    path = item.get("path", "").lower()
+    module = profile.get("module", "")
+    if item.get("kind") == "class":
+        if any(mark in lower for mark in ["record", "sample", "input", "output", "state", "result", "config"]):
+            return "数据结构/契约边界，先看字段含义和消费方"
+        if "dataset" in lower:
+            return "训练或评估样本集合，先看索引、读取和返回结构"
+        if any(mark in lower for mark in ["pipeline", "runner", "engine"]):
+            return "流程编排对象，先看构造依赖和公开方法"
+        if any(mark in lower for mark in ["model", "net", "unet", "module"]):
+            return "模型/网络结构，先看输入通道和 forward 输出"
+        return "类边界，先看构造参数、公开方法和实例化位置"
+    if lower in {"main", "run", "execute"} or lower.startswith("run_"):
+        return "入口或任务执行函数，先看参数装配、主调用和输出收口"
+    if "parse_arg" in lower:
+        return "命令行参数解析，先看默认值、路径参数和开关"
+    if "cuda" in lower or "memory" in lower or "mem" in lower:
+        return "设备/显存观测函数，先看读取口径和调用时机"
+    if "time" in lower or "stage" in lower or "timer" in lower:
+        return "阶段计时/性能记录函数，先看包裹范围和输出字段"
+    if any(mark in lower for mark in ["pair", "sequence", "frame"]):
+        return "帧/序列处理节点，先看输入帧、状态传递和输出对象"
+    if any(mark in lower for mark in ["depth", "disp", "disparity"]):
+        return "深度/视差转换节点，先看尺度、方向和张量形状"
+    if any(mark in lower for mark in ["flow", "warp", "splat", "dibr"]):
+        return "几何搬运节点，先看坐标方向、遮挡和有效掩码"
+    if any(mark in lower for mark in ["load", "read", "fetch", "parse"]):
+        return "读取/解析节点，先看输入来源、格式和异常路径"
+    if any(mark in lower for mark in ["save", "write", "export", "render"]):
+        return "输出/落盘节点，先看产物格式、路径和调用方"
+    if any(mark in lower for mark in ["metric", "psnr", "ssim", "iou", "eval"]):
+        return "评估指标节点，先看度量输入、统计口径和输出字段"
+    if any(mark in lower for mark in ["loss", "train", "forward", "patch"]):
+        return "训练/推理节点，先看张量输入、梯度边界和返回值"
+    if "scripts/" in module:
+        script_name = Path(item.get("path", "")).stem
+        return f"{script_name} 脚本内对象，先判断它是入口、计时、导出还是烟测辅助"
+    if "test" in path:
+        return "测试验证对象，先看它保护的行为和断言边界"
+    return f"{module or '当前模块'} 中的局部处理节点，先从调用证据和返回值定位职责"
+
+
 def render_full_parse_matrix(report: dict, profiles: list[dict], risks: list[dict]) -> str:
     checks = [
         ("项目识别", bool(report.get("readme_files") or report.get("manifests")), "README / manifest / 目录形状"),
         ("入口识别", bool(report.get("entry_candidates")), "脚本、路由、页面或任务入口"),
         ("全局分层", bool(profiles), "按目录和源码模块分层"),
         ("模块依赖", bool(report.get("import_edge_samples")), "静态 import / require 边"),
-        ("逐函数地图", bool(report.get("symbol_samples")), "函数、类、方法抽样"),
+        ("符号索引", bool(report.get("symbol_samples")), f"{len(report.get('symbol_samples', []))} / {report.get('symbol_total', len(report.get('symbol_samples', [])))} 个函数、类、方法"),
         ("配置检查", bool(report.get("config_files") or report.get("manifests")), "manifest、配置文件、默认值线索"),
         ("测试入口", bool(report.get("test_files")), "tests/ 或 test_* 文件"),
         ("风险候选", bool(risks), "只列有静态证据的断点"),
@@ -627,6 +673,32 @@ def render_layer_diagram(profiles: list[dict], report: dict) -> str:
 │ {h(tests):<60} │
 └──────────────────────────────────────────────────────────────┘</pre>
 """
+
+
+def render_reading_ladder(report: dict) -> str:
+    symbol_count = len(report.get("symbol_samples", []))
+    symbol_total = report.get("symbol_total", symbol_count)
+    return f"""
+    <div class="reading-ladder">
+      <div class="ladder-step">
+        <b>L3</b>
+        <strong>先看系统分层</strong>
+        <span>回答“这个项目由哪些层组成，主链从哪里到哪里”。</span>
+      </div>
+      <div class="ladder-arrow">→</div>
+      <div class="ladder-step">
+        <b>L2</b>
+        <strong>再看模块边界</strong>
+        <span>回答“哪个模块依赖谁，哪里可能耦合或断裂”。</span>
+      </div>
+      <div class="ladder-arrow">→</div>
+      <div class="ladder-step">
+        <b>L1</b>
+        <strong>最后挑函数/类</strong>
+        <span>代表卡看局部职责，全量索引定位 {symbol_count} / {symbol_total} 个对象。</span>
+      </div>
+    </div>
+    """
 
 
 def render_module_table(profiles: list[dict]) -> str:
@@ -1387,6 +1459,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     symbol_count = len(report.get("symbol_samples", []))
     edge_count = len(report.get("import_edge_samples", []))
     manifest_count = len(report.get("manifests", [])) + len(report.get("config_files", []))
+    symbol_total = report.get("symbol_total", symbol_count)
+    symbol_limit = report.get("symbol_limit", symbol_count)
+    symbol_tag = f"展示 {symbol_count} / {symbol_total} 个对象"
+    if report.get("symbol_truncated"):
+        symbol_tag += f" · 上限 {symbol_limit}"
 
     first_symbol = choose_symbol(report)
     focus_target = first_symbol["name"] if first_symbol else "首个核心对象"
@@ -1700,6 +1777,48 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 16px;
     }}
+    .reading-ladder {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+      margin: 18px 0;
+    }}
+    .ladder-step {{
+      padding: 16px;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background: #fffef8;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
+    }}
+    .ladder-step b {{
+      display: inline-grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      margin-bottom: 10px;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      background: var(--blue);
+      color: #fff;
+    }}
+    .ladder-step strong {{
+      display: block;
+      margin-bottom: 6px;
+      font-size: 16px;
+    }}
+    .ladder-step span {{
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }}
+    .ladder-arrow {{
+      display: grid;
+      place-items: center;
+      color: var(--amber);
+      font-size: 28px;
+      font-weight: 900;
+    }}
     .fact-table th {{
       width: 180px;
       color: var(--amber);
@@ -1850,11 +1969,32 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .inventory-wrap {{
       max-height: 640px;
       overflow: auto;
+      scrollbar-gutter: stable both-edges;
+      overscroll-behavior: contain;
       border: 2px solid var(--ink);
       border-radius: 8px;
       background:
         linear-gradient(180deg, rgba(255,250,240,.96), rgba(247,243,234,.94)),
         var(--panel);
+    }}
+    .inventory-wrap::-webkit-scrollbar {{
+      width: 16px;
+      height: 16px;
+    }}
+    .inventory-wrap::-webkit-scrollbar-track {{
+      border-left: 2px solid var(--ink);
+      background:
+        linear-gradient(145deg, rgba(196,184,164,.32), rgba(255,250,240,.74)),
+        var(--panel-2);
+    }}
+    .inventory-wrap::-webkit-scrollbar-thumb {{
+      border: 4px solid var(--panel-2);
+      border-radius: 12px;
+      background:
+        linear-gradient(145deg, var(--blue), #174b60);
+    }}
+    .inventory-wrap::-webkit-scrollbar-corner {{
+      background: var(--panel-2);
     }}
     .inventory-table {{
       border: 0;
@@ -2299,7 +2439,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       font-size: 14px;
     }}
     @media (max-width: 1100px) {{
-      body > header, .metrics, .parse-grid, .two-col, .next-grid, .reader-notes-grid {{ grid-template-columns: 1fr; }}
+      body > header, .metrics, .parse-grid, .two-col, .next-grid, .reader-notes-grid, .reading-ladder {{ grid-template-columns: 1fr; }}
+      .ladder-arrow {{ display: none; }}
       body > header {{ min-height: unset; }}
       .note-export {{ grid-column: auto; }}
     }}
@@ -2407,7 +2548,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           <h2>L3 全局分层架构</h2>
           <span class="tag">从入口层到验证层</span>
         </header>
-        <p class="muted">这个图只画“层”，不把所有文件塞进一张网。每层下面的具体函数在 L1 展开。</p>
+        <p class="muted">阅读顺序是 L3 → L2 → L1：先用 L3 确认系统层次，再用 L2 看模块之间的依赖边界，最后在 L1 或全量索引里挑具体函数。</p>
+        {render_reading_ladder(report)}
         {render_layer_diagram(profiles, report)}
       </section>
 
@@ -2436,9 +2578,9 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       <section id="inventory">
         <header>
           <h2>全量符号索引</h2>
-          <span class="tag">最多 260 个源码对象</span>
+          <span class="tag">{h(symbol_tag)}</span>
         </header>
-        <p class="muted">这是本报告的完整函数/类/方法目录：每一行都回到模块层级和证据位置，适合复制后做交叉引用、排查重复职责或指定下一张 L1 小图。</p>
+        <p class="muted">这是本报告的函数/类/方法目录：每一行都回到模块层级和证据位置。大型项目可用 <code>--max-symbols</code> 调整展示预算，避免固定上限截断关键模块。</p>
         <div class="toolbar">
           <button type="button" class="secondary" data-action="copy-symbol-inventory">复制当前索引</button>
         </div>
@@ -3199,8 +3341,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       const selection = window.getSelection();
       const quote = cleanText(selection?.toString(), 500);
       if (!quote || !selection || selection.rangeCount === 0) {{
-        pulse('reader-notes');
-        return;
+        return false;
       }}
       const range = selection.getRangeAt(0).cloneRange();
       const node = range.commonAncestorContainer;
@@ -3209,6 +3350,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         range,
         node
       }});
+      return true;
     }}
 
     function copyNotes() {{
@@ -3236,6 +3378,34 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     document.addEventListener('toggle', () => window.requestAnimationFrame(placeAllLayerItems), true);
 
     const noteIgnoreSelector = '[data-no-note], .report-nav, .hero-actions, button, input, textarea, select, summary';
+    let selectionNoteOpenedAt = 0;
+
+    function elementForNode(node) {{
+      if (!node) return null;
+      return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    }}
+
+    function openNoteFromSelection(sourceEvent = null) {{
+      const selection = window.getSelection();
+      const quote = cleanText(selection?.toString(), 500);
+      if (!quote || quote.length < 2 || !selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+      const range = selection.getRangeAt(0).cloneRange();
+      const element = elementForNode(range.commonAncestorContainer);
+      if (!element || element.closest(noteIgnoreSelector) || element.closest('#noteLayer')) return false;
+      const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 2 && rect.height > 2);
+      if (!rects.length) return false;
+      const editor = activeNoteHost ? layerEditorForHost(activeNoteHost) : null;
+      if (editor && sourceEvent?.target && editor.contains(sourceEvent.target)) return false;
+      if (activeNoteHost) finishInlineNote(activeNoteHost);
+      suppressDocumentClick(520);
+      selectionNoteOpenedAt = Date.now();
+      openInlineNote({{
+        quote,
+        range,
+        node: range.commonAncestorContainer
+      }});
+      return true;
+    }}
 
     function runAction(action) {{
       if (action === 'focus-golden') pulse('golden');
@@ -3303,12 +3473,19 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function handleDocumentDoubleClick(event) {{
       if (eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
+      if (Date.now() - selectionNoteOpenedAt < 520) return;
       const editor = activeNoteHost ? layerEditorForHost(activeNoteHost) : null;
       if (editor && editor.contains(event.target)) return;
       if (activeNoteHost) finishInlineNote(activeNoteHost);
       openNoteFromPointer(event);
     }}
 
+    function handleDocumentMouseUp(event) {{
+      if (eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
+      window.setTimeout(() => openNoteFromSelection(event), 0);
+    }}
+
+    document.addEventListener('mouseup', handleDocumentMouseUp, true);
     document.addEventListener('click', handleDocumentClick, true);
     document.addEventListener('dblclick', handleDocumentDoubleClick, true);
   </script>
@@ -3324,6 +3501,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--title", help="Report title; defaults to the source folder or archive name")
     parser.add_argument("--subtitle", help="Optional subtitle shown under the title")
     parser.add_argument("--max-files", type=int, default=8000, help="Maximum files to scan")
+    parser.add_argument("--max-symbols", type=int, default=1200, help="Maximum function/class/method symbols to show in the inventory; use 0 for all")
     parser.add_argument("--extract-to", help="Optional directory for zip extraction; keep it outside the target repo")
     parser.add_argument("--keep-temp", action="store_true", help="Keep an auto-created zip extraction directory")
     parser.add_argument(
@@ -3341,6 +3519,7 @@ def main(argv: list[str] | None = None) -> int:
             source=source,
             output_path=output_path,
             max_files=args.max_files,
+            max_symbols=args.max_symbols,
             extract_to=args.extract_to,
             keep_temp=args.keep_temp,
             allow_output_in_repo=args.allow_output_in_repo,

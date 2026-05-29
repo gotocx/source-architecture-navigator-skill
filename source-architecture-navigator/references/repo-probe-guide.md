@@ -32,6 +32,7 @@ python scripts/repo_probe.py <source.zip> --keep-temp
 python scripts/repo_probe.py <source.zip> --extract-to <outside-repo-analysis-dir>
 python scripts/repo_probe.py <repo-path> --json
 python scripts/repo_probe.py <repo-path> --max-files 5000
+python scripts/repo_probe.py <repo-path> --max-symbols 2000
 ```
 
 可选写出文件：
@@ -49,9 +50,10 @@ python scripts/repo_probe.py <repo-path> --output <outside-or-user-approved-path
 ```bash
 python scripts/render_navigation_html.py <repo-path> --output <outside-analysis-dir>/source_navigation_report.html
 python scripts/render_navigation_html.py <source.zip> --output <outside-analysis-dir>/source_navigation_report.html --title "<project-name>"
+python scripts/render_navigation_html.py <source.zip> --output <outside-analysis-dir>/source_navigation_report.html --max-symbols 2000
 ```
 
-HTML 报告同样默认拒绝写入被扫描仓库。zip 输入默认只保留相对证据路径；若希望报告中的文件链接可点击，使用 `--extract-to <outside-analysis-dir>/source` 或 `--keep-temp`。报告应包含全量符号索引、函数筛选、索引复制、模块展开/收起、主路径高亮、证据表显隐、双击正文笔记和笔记导出。
+HTML 报告同样默认拒绝写入被扫描仓库。zip 输入默认只保留相对证据路径；若希望报告中的文件链接可点击，使用 `--extract-to <outside-analysis-dir>/source` 或 `--keep-temp`。报告应包含全量符号索引、函数筛选、索引复制、模块展开/收起、主路径高亮、证据表显隐、选中文句笔记、双击正文笔记和笔记导出。
 
 生成后可以用浏览器回归脚本检查关键交互：
 
