@@ -1291,14 +1291,14 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       --note-base: #ece4d5;
       --note-hi: #fffaf0;
       --note-lo: #c4b8a4;
-      --note-shadow-dark: rgba(94, 73, 44, .24);
-      --note-shadow-light: rgba(255, 250, 240, .96);
+      --note-shadow-dark: rgba(94, 73, 44, .18);
+      --note-shadow-light: rgba(255, 250, 240, .76);
       --note-grad-a: #d4c7b2;
       --note-grad-b: #fff3dd;
-      --note-glass-a: rgba(212, 199, 178, .56);
-      --note-glass-b: rgba(255, 243, 221, .74);
-      --note-glass-base: rgba(236, 228, 213, .68);
-      --note-ring: rgba(36, 107, 134, .18);
+      --note-glass-a: rgba(212, 199, 178, .26);
+      --note-glass-b: rgba(255, 243, 221, .42);
+      --note-glass-base: rgba(236, 228, 213, .34);
+      --note-ring: rgba(36, 107, 134, .22);
       --note-ink: #172125;
     }}
     body.theme-night {{
@@ -1321,14 +1321,14 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       --note-base: #272720;
       --note-hi: #39382f;
       --note-lo: #15160f;
-      --note-shadow-dark: rgba(0, 0, 0, .58);
-      --note-shadow-light: rgba(112, 94, 61, .24);
+      --note-shadow-dark: rgba(0, 0, 0, .46);
+      --note-shadow-light: rgba(112, 94, 61, .18);
       --note-grad-a: #171810;
       --note-grad-b: #393427;
-      --note-glass-a: rgba(23, 24, 16, .58);
-      --note-glass-b: rgba(57, 52, 39, .72);
-      --note-glass-base: rgba(39, 39, 32, .66);
-      --note-ring: rgba(127, 183, 200, .18);
+      --note-glass-a: rgba(23, 24, 16, .34);
+      --note-glass-b: rgba(57, 52, 39, .48);
+      --note-glass-base: rgba(39, 39, 32, .40);
+      --note-ring: rgba(127, 183, 200, .24);
       --note-ink: #f2eadc;
     }}
     * {{ box-sizing: border-box; }}
@@ -1936,8 +1936,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         inset -8px -8px 16px var(--note-shadow-light),
         inset 0 0 0 1px var(--note-ring);
       color: var(--note-ink);
-      -webkit-backdrop-filter: blur(9px) saturate(1.08);
-      backdrop-filter: blur(9px) saturate(1.08);
+      -webkit-backdrop-filter: blur(4px) saturate(1.12);
+      backdrop-filter: blur(4px) saturate(1.12);
       font: 600 16px/1.35 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
       outline: 0;
     }}
@@ -1959,8 +1959,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         -8px -8px 16px var(--note-shadow-light),
         0 0 0 1px var(--note-ring);
       color: var(--note-ink);
-      -webkit-backdrop-filter: blur(9px) saturate(1.08);
-      backdrop-filter: blur(9px) saturate(1.08);
+      -webkit-backdrop-filter: blur(4px) saturate(1.12);
+      backdrop-filter: blur(4px) saturate(1.12);
       cursor: text;
       font: 600 15px/1.45 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
       overflow: hidden;
