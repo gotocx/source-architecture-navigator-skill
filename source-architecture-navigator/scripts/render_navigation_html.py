@@ -583,7 +583,7 @@ def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool
                 f"""
                 <article class="func-card" data-symbol-text="{h(search_text).lower()}">
                   <div class="sig">{h(symbol_signature(item))}</div>
-                  <p>{h(infer_symbol_note(item))}</p>
+                  <p>{h(infer_symbol_note(item, profile["module"]))}</p>
                   <div class="meta"><span>{h(badge)}</span>{path_link(f"{item['path']}:{item['line']}", scan_root, linkable)}</div>
                 </article>
                 """
@@ -599,22 +599,24 @@ def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool
     return "\n".join(groups) or '<p class="muted">未抽取到函数、类或组件定义。</p>'
 
 
-def infer_symbol_note(item: dict) -> str:
+def infer_symbol_note(item: dict, module: str = "") -> str:
     name = item.get("name", "")
     lower = name.lower()
     if any(mark in lower for mark in ["config", "settings", "options"]):
-        return "配置或参数结构，优先检查默认值和覆盖来源。"
+        return "负责承载配置或参数边界；阅读时先列默认值、覆盖来源和实际使用点。"
     if any(mark in lower for mark in ["input", "output", "state", "result", "summary", "schema"]):
-        return "数据契约对象，适合做字段旅程和接口契约追踪。"
+        return "负责描述数据契约；阅读时先拆字段来源、转换位置、消费方和返回边界。"
     if any(mark in lower for mark in ["run", "main", "execute", "handle", "process"]):
-        return "运行或编排节点，适合下一轮画 L1/L2 调用链。"
+        return "负责触发运行或编排流程；阅读时按入口、核心调用、输出收口梳理主链。"
     if any(mark in lower for mark in ["load", "read", "fetch", "parse"]):
-        return "输入或加载节点，适合确认数据来源和副作用。"
+        return "负责读取、解析或装配输入；阅读时确认来源、格式、异常路径和副作用。"
     if any(mark in lower for mark in ["save", "write", "export", "render"]):
-        return "输出或落盘节点，适合检查产物边界。"
+        return "负责生成、渲染或落盘输出；阅读时确认产物格式、保存位置和调用方。"
     if item.get("kind") == "class":
-        return "类级边界，先看构造参数、公开方法和被谁实例化。"
-    return "可下钻的源码对象，需结合上下游搜索确认职责。"
+        return "负责定义类级边界；阅读时先列构造参数、公开方法、实例化位置和状态变化。"
+    kind = item.get("kind", "symbol")
+    role = role_for_module(module) if module else "当前模块职责"
+    return f"负责承接“{role}”中的{kind}边界；阅读时按签名梳理输入、处理、输出、调用点和副作用。"
 
 
 def render_golden_path(route: list[dict], report: dict) -> str:
@@ -1751,6 +1753,164 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       box-shadow: 4px 4px 0 rgba(17,17,17,.14);
     }}
     .question strong {{ color: #f5ead4; }}
+    .reader-notes {{
+      background:
+        linear-gradient(135deg, rgba(237, 244, 238, .72), rgba(255, 250, 240, .92)),
+        var(--panel);
+    }}
+    .reader-notes-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+      gap: 16px;
+      align-items: start;
+    }}
+    .note-tools, .notes-list, .note-export {{
+      padding: 16px;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background: #fffef8;
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
+    }}
+    .note-tools {{
+      display: grid;
+      gap: 10px;
+    }}
+    .note-tools p, .note-card p {{
+      margin: 0;
+    }}
+    .note-tools select, .note-tools textarea, .note-editor textarea {{
+      width: 100%;
+      border: 2px solid var(--ink);
+      border-radius: 6px;
+      padding: 10px 11px;
+      background: var(--panel);
+      color: var(--ink);
+      font: inherit;
+    }}
+    .notes-list {{
+      display: grid;
+      gap: 10px;
+      min-height: 150px;
+    }}
+    .note-card {{
+      padding: 12px;
+      border: 2px solid var(--ink);
+      border-left: 8px solid var(--green);
+      border-radius: 8px;
+      background: var(--panel);
+    }}
+    .note-card blockquote {{
+      margin: 0 0 8px;
+      padding-left: 10px;
+      border-left: 3px solid var(--blue);
+      color: var(--muted);
+    }}
+    .note-card footer {{
+      margin-top: 8px;
+      padding: 0;
+      border: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .note-card button {{
+      min-height: 32px;
+      padding: 5px 9px;
+      margin-top: 8px;
+      font-size: 12px;
+      box-shadow: 3px 3px 0 var(--red);
+    }}
+    .note-export {{
+      grid-column: 1 / -1;
+    }}
+    .note-export textarea {{
+      width: 100%;
+      min-height: 130px;
+      border: 2px solid var(--ink);
+      border-radius: 6px;
+      padding: 12px;
+      background: #181713;
+      color: #f5ead4;
+      font: 13px/1.55 "Cascadia Mono", Consolas, monospace;
+    }}
+    .note-editor {{
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      z-index: 20;
+      width: min(440px, calc(100vw - 32px));
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      padding: 16px;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow:
+        12px 12px 24px rgba(28, 24, 18, .22),
+        -8px -8px 18px rgba(255, 255, 255, .65);
+      transform: translate(-50%, -50%);
+    }}
+    .note-editor[hidden] {{ display: none; }}
+    .note-editor h3 {{
+      margin-bottom: 8px;
+      font-family: Georgia, "Microsoft YaHei", serif;
+      font-size: 24px;
+    }}
+    .note-context {{
+      margin: 0 0 10px;
+      padding: 8px;
+      border: 1px dashed rgba(17,17,17,.28);
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .note-editor-actions {{
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+    }}
+    .note-sink {{
+      position: relative;
+      border-radius: 10px;
+      background-color: rgba(235, 228, 214, .42);
+      box-shadow:
+        inset 8px 8px 18px rgba(28, 24, 18, .18),
+        inset -7px -7px 16px rgba(255, 255, 255, .72) !important;
+      transform: translateY(2px);
+    }}
+    .note-raised {{
+      position: relative;
+      border-radius: 10px;
+      box-shadow:
+        9px 9px 18px rgba(28, 24, 18, .16),
+        -5px -5px 12px rgba(255, 255, 255, .72),
+        0 0 0 1px rgba(17, 17, 17, .08) !important;
+    }}
+    .note-raised::after {{
+      content: "笔记";
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid rgba(17,17,17,.24);
+      background: #fffef8;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 800;
+      pointer-events: none;
+    }}
+    .note-pick-active {{
+      cursor: crosshair;
+    }}
+    .note-pick-active [data-noteable="true"] {{
+      outline: 2px dashed rgba(199, 66, 49, .42);
+      outline-offset: 4px;
+    }}
+    mark.reader-highlight {{
+      background: linear-gradient(transparent 50%, rgba(177, 109, 34, .35) 50%);
+      color: inherit;
+      padding: 0 2px;
+    }}
     .muted {{ color: var(--muted); }}
     footer {{
       max-width: 1180px;
@@ -1761,14 +1921,16 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       font-size: 14px;
     }}
     @media (max-width: 1100px) {{
-      body > header, .metrics, .parse-grid, .two-col, .next-grid {{ grid-template-columns: 1fr; }}
+      body > header, .metrics, .parse-grid, .two-col, .next-grid, .reader-notes-grid {{ grid-template-columns: 1fr; }}
       body > header {{ min-height: unset; }}
+      .note-export {{ grid-column: auto; }}
     }}
     @media (max-width: 620px) {{
       body > header {{ padding: 34px 18px; }}
       main {{ padding: 36px 18px 56px; }}
       .map-board {{ min-height: unset; }}
       .hero-actions {{ flex-direction: column; align-items: stretch; }}
+      .note-editor {{ left: 16px !important; right: 16px; top: auto !important; bottom: 16px; width: auto; transform: none; }}
     }}
     @media print {{
       body {{ background: #fff; }}
@@ -1788,6 +1950,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
             <button type="button" class="secondary" data-action="expand-functions">展开全部函数</button>
             <button type="button" class="secondary" data-action="collapse-functions">收起函数地图</button>
             <button type="button" class="secondary" data-action="toggle-evidence">显示/隐藏证据</button>
+            <button type="button" class="secondary" data-action="note-mode">任意点击写笔记</button>
+            <button type="button" class="secondary" data-action="note-selection">标注选中文句</button>
       </div>
       <nav class="report-nav">
         <a href="#project">项目识别</a>
@@ -1800,6 +1964,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         <a href="#risks">问题诊断</a>
         <a href="#route">阅读路线</a>
         <a href="#evidence">证据表</a>
+        <a href="#reader-notes">阅读笔记</a>
         <a href="#next">下一问</a>
       </nav>
     </div>
@@ -1821,6 +1986,31 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         {render_metric("依赖边", edge_count, "静态导入样本")}
         {render_metric("配置线索", manifest_count, "manifest + config")}
       </div>
+
+      <section id="reader-notes" class="reader-notes" data-no-note>
+        <header>
+          <h2>阅读笔记</h2>
+          <span class="tag">点选位置 + 选中文句</span>
+        </header>
+        <div class="reader-notes-grid">
+          <div class="note-tools">
+            <button type="button" data-action="note-mode">任意点击页面内容即可写笔记</button>
+            <button type="button" class="secondary" data-action="note-selection">给选中文句做笔记</button>
+            <select id="noteExportMode" aria-label="笔记导出格式">
+              <option value="ordered">按照顺序：用户记录内容</option>
+              <option value="source">原文对照：原文 + 用户记录内容</option>
+            </select>
+            <button type="button" class="secondary" data-action="copy-notes">复制导出内容</button>
+            <button type="button" class="secondary" data-action="download-notes">下载笔记</button>
+            <button type="button" class="secondary" data-action="clear-notes">清空本页笔记</button>
+            <p class="muted">点击任意正文位置会下沉并出现输入框；不输入就恢复，有笔记后该位置会变成凸起。选择一句话后点“给选中文句做笔记”，会同时保存原文和你的记录。</p>
+          </div>
+          <div id="notesList" class="notes-list" aria-live="polite"></div>
+          <div class="note-export">
+            <textarea id="notesExport" readonly aria-label="笔记导出预览"></textarea>
+          </div>
+        </div>
+      </section>
 
       <section id="project">
         <header>
@@ -1934,6 +2124,15 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         本报告来自静态源码扫描和启发式归类。它的目标是一次性建立完整阅读地图，不替代运行测试、精确调用链搜索和人工源码复核。
       </footer>
     </main>
+  <div id="noteEditor" class="note-editor" data-no-note hidden>
+    <h3>记录阅读笔记</h3>
+    <p id="noteContext" class="note-context"></p>
+    <textarea id="noteText" rows="5" placeholder="写下这一步的理解、疑问或下一步要追踪的对象"></textarea>
+    <div class="note-editor-actions">
+      <button type="button" class="secondary" data-action="cancel-note">取消</button>
+      <button type="button" data-action="save-note">保存到阅读笔记</button>
+    </div>
+  </div>
   <script>
     const sections = document.querySelectorAll('section');
     const reveal = new IntersectionObserver((entries) => {{
@@ -1977,23 +2176,325 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       window.setTimeout(() => target.classList.add('focus-pulse'), 240);
     }}
 
+    const notesKey = 'source-nav-notes:' + location.pathname + ':' + document.title;
+    const notesList = document.getElementById('notesList');
+    const noteExportMode = document.getElementById('noteExportMode');
+    const notesExport = document.getElementById('notesExport');
+    const noteEditor = document.getElementById('noteEditor');
+    const noteContext = document.getElementById('noteContext');
+    const noteText = document.getElementById('noteText');
+    let notes = [];
+    let pendingNote = null;
+    let noteMode = false;
+    let activeNoteHost = null;
+
+    function loadNotes() {{
+      try {{
+        notes = JSON.parse(localStorage.getItem(notesKey) || '[]');
+        if (!Array.isArray(notes)) notes = [];
+      }} catch (error) {{
+        notes = [];
+      }}
+    }}
+
+    function saveNotes() {{
+      localStorage.setItem(notesKey, JSON.stringify(notes));
+    }}
+
+    function elementFromNode(node) {{
+      if (!node) return document.body;
+      return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    }}
+
+    function sectionLabel(node) {{
+      const element = elementFromNode(node);
+      const section = element?.closest('section');
+      if (!section) return '首屏概览';
+      const title = section.querySelector('h2')?.textContent?.trim() || section.id || '未命名区块';
+      const symbol = element.closest('.func-card')?.querySelector('.sig')?.textContent?.trim();
+      const rowPath = element.closest('tr')?.querySelector('code')?.textContent?.trim();
+      const detail = symbol || rowPath || '';
+      return detail ? title + ' / ' + detail : title;
+    }}
+
+    function orderForNode(node) {{
+      const element = elementFromNode(node);
+      const anchors = Array.from(document.querySelectorAll('body > header, section, .func-card, tr, .timeline-item, .issue, .route-panel, .question'));
+      const index = anchors.findIndex(anchor => anchor === element || anchor.contains(element));
+      return index >= 0 ? index : Date.now();
+    }}
+
+    function noteHost(node) {{
+      const element = elementFromNode(node);
+      return element?.closest('.func-card, .issue, .route-panel, .question, .timeline-item, .parse-cell, td, li, p, article, section, body > header') || element || document.body;
+    }}
+
+    function activateNoteHost(node) {{
+      if (activeNoteHost) activeNoteHost.classList.remove('note-sink');
+      activeNoteHost = noteHost(node);
+      activeNoteHost.classList.remove('note-raised');
+      activeNoteHost.classList.add('note-sink');
+    }}
+
+    function clearActiveNoteHost(saved) {{
+      if (!activeNoteHost) return;
+      activeNoteHost.classList.remove('note-sink');
+      if (saved) activeNoteHost.classList.add('note-raised');
+      activeNoteHost = null;
+    }}
+
+    function cleanText(value, limit = 900) {{
+      return (value || '').replace(/\\s+/g, ' ').trim().slice(0, limit);
+    }}
+
+    function placeNoteEditor(x, y) {{
+      if (!x || !y) {{
+        noteEditor.style.left = '50%';
+        noteEditor.style.top = '50%';
+        noteEditor.style.transform = 'translate(-50%, -50%)';
+        return;
+      }}
+      const width = Math.min(440, window.innerWidth - 32);
+      const left = Math.min(Math.max(16, x + 18), window.innerWidth - width - 16);
+      const top = Math.min(Math.max(16, y + 18), Math.max(16, window.innerHeight - 360));
+      noteEditor.style.left = left + 'px';
+      noteEditor.style.top = top + 'px';
+      noteEditor.style.transform = 'none';
+    }}
+
+    function openNoteEditor(context) {{
+      if (!noteEditor.hidden && !cleanText(noteText.value)) {{
+        noteEditor.hidden = true;
+        clearActiveNoteHost(false);
+      }}
+      pendingNote = context;
+      activateNoteHost(context.node);
+      placeNoteEditor(context.clientX, context.clientY);
+      noteContext.textContent = context.quote ? '原文：' + context.quote : '位置：' + context.label;
+      noteText.value = '';
+      noteEditor.hidden = false;
+      noteText.focus();
+    }}
+
+    function hasHighlight(id) {{
+      return Array.from(document.querySelectorAll('mark.reader-highlight')).some(mark => mark.dataset.noteId === id);
+    }}
+
+    function highlightRange(range, id) {{
+      if (!range || range.collapsed) return;
+      const mark = document.createElement('mark');
+      mark.className = 'reader-highlight';
+      mark.dataset.noteId = id;
+      try {{
+        range.surroundContents(mark);
+      }} catch (error) {{
+        highlightFirstText(cleanText(range.toString(), 280), id);
+      }}
+    }}
+
+    function highlightFirstText(quote, id) {{
+      if (!quote || hasHighlight(id)) return;
+      const root = document.querySelector('main') || document.body;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {{
+        acceptNode(node) {{
+          const parent = node.parentElement;
+          if (!parent || parent.closest('[data-no-note], script, style, mark')) return NodeFilter.FILTER_REJECT;
+          return node.nodeValue.includes(quote) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        }}
+      }});
+      const textNode = walker.nextNode();
+      if (!textNode) return;
+      const start = textNode.nodeValue.indexOf(quote);
+      if (start < 0) return;
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + quote.length);
+      highlightRange(range, id);
+    }}
+
+    function sortedNotes() {{
+      return [...notes].sort((a, b) => (a.order - b.order) || String(a.createdAt).localeCompare(String(b.createdAt)));
+    }}
+
+    function buildExport() {{
+      const mode = noteExportMode?.value || 'ordered';
+      const sorted = sortedNotes();
+      if (!sorted.length) return '';
+      return sorted.map((note, index) => {{
+        const body = (note.text || '').trim();
+        if (mode === 'source') {{
+          const source = note.quote || note.label || '点击位置';
+          return `${{index + 1}}. 原文：${{source}}\\n记录：${{body}}`;
+        }}
+        return `${{index + 1}}. 按照顺序：${{body}}`;
+      }}).join('\\n\\n');
+    }}
+
+    function renderNotes() {{
+      if (!notesList) return;
+      const sorted = sortedNotes();
+      notesList.replaceChildren();
+      if (!sorted.length) {{
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = '还没有笔记。点“点选页面任意位置”，或先划一句话再点“给选中文句做笔记”。';
+        notesList.append(empty);
+      }}
+      sorted.forEach((note, index) => {{
+        const card = document.createElement('article');
+        card.className = 'note-card';
+        if (note.quote) {{
+          const quote = document.createElement('blockquote');
+          quote.textContent = note.quote;
+          card.append(quote);
+          highlightFirstText(note.quote, note.id);
+        }}
+        const body = document.createElement('p');
+        body.textContent = note.text;
+        const meta = document.createElement('footer');
+        meta.textContent = `${{index + 1}}. ${{note.label || '页面位置'}} · ${{new Date(note.createdAt).toLocaleString()}}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'secondary';
+        remove.textContent = '删除这条';
+        remove.addEventListener('click', () => {{
+          notes = notes.filter(item => item.id !== note.id);
+          saveNotes();
+          renderNotes();
+        }});
+        card.append(body, meta, remove);
+        notesList.append(card);
+      }});
+      if (notesExport) notesExport.value = buildExport();
+    }}
+
+    function savePendingNote() {{
+      const text = cleanText(noteText.value, 1600);
+      if (!pendingNote || !text) {{
+        noteEditor.hidden = true;
+        pendingNote = null;
+        clearActiveNoteHost(false);
+        return;
+      }}
+      const note = {{
+        id: 'note-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        text,
+        quote: pendingNote.quote || '',
+        label: pendingNote.label,
+        order: pendingNote.order,
+        createdAt: new Date().toISOString()
+      }};
+      notes.push(note);
+      saveNotes();
+      if (pendingNote.range) highlightRange(pendingNote.range, note.id);
+      noteEditor.hidden = true;
+      pendingNote = null;
+      clearActiveNoteHost(true);
+      renderNotes();
+    }}
+
+    function captureSelectionNote() {{
+      const selection = window.getSelection();
+      const quote = cleanText(selection?.toString(), 500);
+      if (!quote || !selection || selection.rangeCount === 0) {{
+        pulse('reader-notes');
+        return;
+      }}
+      const range = selection.getRangeAt(0).cloneRange();
+      const node = range.commonAncestorContainer;
+      openNoteEditor({{
+        quote,
+        label: sectionLabel(node),
+        order: orderForNode(node),
+        range,
+        node
+      }});
+    }}
+
+    function toggleNoteMode(force) {{
+      noteMode = typeof force === 'boolean' ? force : !noteMode;
+      document.body.classList.toggle('note-pick-active', noteMode);
+      const modeButtons = document.querySelectorAll('[data-action="note-mode"]');
+      modeButtons.forEach(button => button.textContent = noteMode ? '退出点选笔记' : '点选页面任意位置');
+      if (noteMode) pulse('reader-notes');
+    }}
+
+    function copyNotes() {{
+      const text = buildExport();
+      if (!text) return;
+      if (navigator.clipboard?.writeText) {{
+        navigator.clipboard.writeText(text);
+      }} else if (notesExport) {{
+        notesExport.focus();
+        notesExport.select();
+        document.execCommand('copy');
+      }}
+    }}
+
+    function downloadNotes() {{
+      const text = buildExport();
+      if (!text) return;
+      const blob = new Blob([text], {{ type: 'text/plain;charset=utf-8' }});
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'source-reading-notes.txt';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }}
+
+    loadNotes();
+    renderNotes();
+    noteExportMode?.addEventListener('change', renderNotes);
+
     document.addEventListener('click', (event) => {{
       const button = event.target.closest('[data-action]');
-      if (!button) return;
-      const action = button.dataset.action;
-      if (action === 'focus-golden') pulse('golden');
-      if (action === 'expand-functions') groups.forEach(group => group.open = true);
-      if (action === 'collapse-functions') groups.forEach(group => group.open = false);
-      if (action === 'clear-search' && search) {{
-        search.value = '';
-        applyFilter();
-        search.focus();
+      if (button) {{
+        const action = button.dataset.action;
+        if (action === 'focus-golden') pulse('golden');
+        if (action === 'expand-functions') groups.forEach(group => group.open = true);
+        if (action === 'collapse-functions') groups.forEach(group => group.open = false);
+        if (action === 'clear-search' && search) {{
+          search.value = '';
+          applyFilter();
+          search.focus();
+        }}
+        if (action === 'toggle-evidence') {{
+          const table = document.querySelector('#evidence table');
+          if (table) table.hidden = !table.hidden;
+          pulse('evidence');
+        }}
+        if (action === 'note-mode') pulse('reader-notes');
+        if (action === 'note-selection') captureSelectionNote();
+        if (action === 'save-note') savePendingNote();
+        if (action === 'cancel-note') {{
+          noteEditor.hidden = true;
+          pendingNote = null;
+          clearActiveNoteHost(false);
+        }}
+        if (action === 'copy-notes') copyNotes();
+        if (action === 'download-notes') downloadNotes();
+        if (action === 'clear-notes' && confirm('清空本页所有阅读笔记？')) {{
+          notes = [];
+          saveNotes();
+          renderNotes();
+        }}
+        return;
       }}
-      if (action === 'toggle-evidence') {{
-        const table = document.querySelector('#evidence table');
-        if (table) table.hidden = !table.hidden;
-        pulse('evidence');
-      }}
+      if (event.target.closest('[data-no-note], button, a, input, textarea, select, summary')) return;
+      event.preventDefault();
+      const selection = window.getSelection();
+      const quote = cleanText(selection?.toString(), 500);
+      const range = quote && selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+      const node = range?.commonAncestorContainer || event.target;
+      openNoteEditor({{
+        quote,
+        label: sectionLabel(node),
+        order: orderForNode(node),
+        range,
+        node,
+        clientX: event.clientX,
+        clientY: event.clientY
+      }});
     }});
   </script>
 </body>
