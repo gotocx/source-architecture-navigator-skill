@@ -1954,10 +1954,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       display: none;
     }}
     #noteLayer {{
-      position: absolute;
+      position: fixed;
       inset: 0;
-      z-index: 12;
+      z-index: 9999;
       pointer-events: none;
+      overflow: visible;
     }}
     #noteLayer .inline-note-pad,
     #noteLayer .inline-note-view {{
@@ -2319,6 +2320,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       return (value || '').replace(/\\s+/g, ' ').trim().slice(0, limit);
     }}
 
+    function cssEscape(value) {{
+      if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+      return String(value).replace(/[^a-zA-Z0-9_-]/g, match => '\\\\' + match);
+    }}
+
     function noteForHost(host, quote = '') {{
       const hostId = ensureHostId(host);
       if (quote) return notes.find(note => note.hostId === hostId && note.quote === quote);
@@ -2328,7 +2334,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     function layerEditorForHost(host) {{
       if (!noteLayer || !host) return null;
       const hostId = ensureHostId(host);
-      return noteLayer.querySelector(`.inline-note-pad[data-host-id="${{CSS.escape(hostId)}}"]`);
+      return noteLayer.querySelector(`.inline-note-pad[data-host-id="${{cssEscape(hostId)}}"]`);
     }}
 
     function clamp(value, min, max) {{
@@ -2358,10 +2364,10 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       const maxWidth = Math.max(180, Math.min(360, window.innerWidth - 32));
       const width = Math.min(maxWidth, Math.max(180, rect.width - 28));
       const hasPoint = note && Number.isFinite(note.relX) && Number.isFinite(note.relY);
-      const anchorX = rect.left + window.scrollX + (hasPoint ? rect.width * note.relX : 14);
-      const anchorY = rect.top + window.scrollY + (hasPoint ? rect.height * note.relY : 12);
-      const left = clamp(anchorX - 18, window.scrollX + 16, window.scrollX + window.innerWidth - width - 16);
-      const top = clamp(anchorY - 28, window.scrollY + 12, document.documentElement.scrollHeight - 72);
+      const anchorX = rect.left + (hasPoint ? rect.width * note.relX : 14);
+      const anchorY = rect.top + (hasPoint ? rect.height * note.relY : 12);
+      const left = clamp(anchorX - 18, 16, window.innerWidth - width - 16);
+      const top = clamp(anchorY - 28, 12, window.innerHeight - 72);
       return {{ left, top, width }};
     }}
 
@@ -2371,6 +2377,10 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function placeLayerItem(element, host, note = null) {{
       if (!element || !host) return;
+      const hostRect = host.getBoundingClientRect();
+      const isVisible = hostRect.bottom >= 0 && hostRect.top <= window.innerHeight && hostRect.right >= 0 && hostRect.left <= window.innerWidth;
+      element.hidden = !isVisible;
+      if (!isVisible) return;
       const rect = noteLayerRect(host, note || layerNoteForElement(element));
       element.style.left = rect.left + 'px';
       element.style.top = rect.top + 'px';
@@ -2474,7 +2484,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       removeInlineEditors();
       activeNoteHost = host;
       const hostId = ensureHostId(host);
-      noteLayer?.querySelectorAll(`.inline-note-view[data-host-id="${{CSS.escape(hostId)}}"]`).forEach(view => view.remove());
+      noteLayer?.querySelectorAll(`.inline-note-view[data-host-id="${{cssEscape(hostId)}}"]`).forEach(view => view.remove());
 
       let note = noteForHost(host, context.quote || '');
       const point = notePointFromContext(host, context);
@@ -2596,7 +2606,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         if (action === 'download-notes') downloadNotes();
         return;
       }}
-      if (event.target.closest('[data-no-note], button, a, input, textarea, select, summary')) return;
+      if (event.target.closest('[data-no-note], .report-nav, .hero-actions, button, input, textarea, select, summary')) return;
       if (activeNoteHost) {{
         const current = activeNoteHost;
         const nextHost = noteHost(event.target);
