@@ -352,6 +352,106 @@ INTERNAL_MARKERS = {
 }
 
 
+SURFACE_SEGMENTS = {
+    "test",
+    "tests",
+    "testing",
+    "docs",
+    "doc",
+    "examples",
+    "example",
+    "sample",
+    "samples",
+    "demo",
+    "demos",
+    "benchmark",
+    "benchmarks",
+    "perf",
+    "scripts",
+    "tools",
+    "tooling",
+}
+
+
+SOURCE_ROOTS = {"source", "lib"}
+
+
+EXTERNAL_ROOTS = {
+    "abc",
+    "argparse",
+    "asyncio",
+    "collections",
+    "contextlib",
+    "copy",
+    "ctypes",
+    "dataclasses",
+    "datetime",
+    "email",
+    "enum",
+    "errno",
+    "functools",
+    "glob",
+    "hashlib",
+    "importlib",
+    "inspect",
+    "io",
+    "itertools",
+    "json",
+    "locale",
+    "logging",
+    "math",
+    "os",
+    "pathlib",
+    "pickle",
+    "platform",
+    "re",
+    "shlex",
+    "shutil",
+    "signal",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "textwrap",
+    "threading",
+    "time",
+    "traceback",
+    "types",
+    "typing",
+    "urllib",
+    "warnings",
+    "weakref",
+    "xml",
+}
+
+
+def path_segments(path: str) -> list[str]:
+    return [part.lower() for part in re.split(r"[\\/]+", path) if part]
+
+
+def source_package(path: str) -> str:
+    segments = path_segments(path)
+    if len(segments) >= 2 and segments[0] == "src":
+        return segments[1]
+    return ""
+
+
+def normalize_import_path(source_path: str, target: str) -> str:
+    if not target.startswith("."):
+        return target
+    base = path_segments(source_path)[:-1]
+    parts = path_segments(target)
+    resolved = base[:]
+    for part in parts:
+        if part == ".":
+            continue
+        if part == "..":
+            if resolved:
+                resolved.pop()
+            continue
+        resolved.append(part)
+    return "/".join(resolved)
+
+
 def module_key(path: str) -> str:
     parts = Path(path).parts
     if not parts:
@@ -362,23 +462,49 @@ def module_key(path: str) -> str:
     if lowered[0] in {"tests", "test"}:
         return "tests/"
     if lowered[0] == "src" and len(parts) >= 3:
+        package = parts[1]
+        if len(parts) == 3:
+            stem = Path(parts[2]).stem
+            if stem.lower() in {"__init__", "__main__"}:
+                return f"{package}/"
+            return f"{package}/{stem}"
         for part in parts[2:-1]:
             if part.lower() in INTERNAL_MARKERS:
                 return f"{part}/"
         if len(parts) >= 4:
-            return f"{parts[2]}/"
+            return f"{package}/{parts[2]}"
+        return f"{package}/"
+    if lowered[0] in SOURCE_ROOTS:
+        if len(parts) >= 3:
+            return f"{parts[0]}/{parts[1]}"
+        if len(parts) == 2:
+            stem = Path(parts[1]).stem
+            return f"{parts[0]}/{stem}"
     if len(parts) >= 2:
         return f"{parts[0]}/"
     return "(root)"
 
 
-def target_module(target: str) -> str:
+def target_module(target: str, source_path: str = "") -> str:
+    if target.startswith("."):
+        return module_key(normalize_import_path(source_path, target))
     parts = [part for part in re.split(r"[./\\]", target) if part and part not in {"src"}]
+    package = source_package(source_path)
+    if not parts:
+        return "external"
+    if parts[0] in EXTERNAL_ROOTS and parts[0] != package:
+        return "external"
     for part in parts:
         if part.lower() in INTERNAL_MARKERS:
             return f"{part}/"
-    if len(parts) >= 2 and parts[0] not in {"typing", "pathlib", "os", "sys", "json", "re"}:
-        return f"{parts[-2]}/"
+    if package and parts[0] == package:
+        if len(parts) >= 2:
+            return f"{package}/{parts[1]}"
+        return f"{package}/"
+    if package and len(parts) == 1:
+        return f"{package}/{parts[0]}"
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
     return "external"
 
 
@@ -403,7 +529,9 @@ def build_module_profiles(report: dict) -> list[dict]:
 
     for edge in report.get("import_edge_samples", []):
         source_key = module_key(edge["source"])
-        target_key = target_module(edge["target"])
+        target_key = target_module(edge["target"], edge["source"])
+        if target_key != "external" and target_key not in profiles:
+            target_key = "external"
         if target_key != source_key:
             source = profiles.setdefault(
                 source_key,
@@ -423,13 +551,88 @@ def build_module_profiles(report: dict) -> list[dict]:
         profile["depends_on"] = sorted(profile["depends_on"])
         profile["depended_by"] = sorted(profile["depended_by"])
         result.append(profile)
-    return sorted(result, key=lambda item: (-len(item["symbols"]), item["module"]))
+    return sorted(result, key=profile_rank_key)
+
+
+def profile_surface_penalty(profile: dict) -> int:
+    module = profile.get("module", "").lower()
+    segments = set()
+    for rel in profile.get("files", []):
+        segments.update(path_segments(rel))
+
+    if module == "(root)":
+        return 2
+    if module in {"tests/", "test/"} or segments.intersection({"test", "tests", "testing"}):
+        return 8
+    if module in {"docs/", "doc/"} or segments.intersection({"docs", "doc"}):
+        return 7
+    if module in {"examples/", "example/", "samples/", "sample/", "demo/", "demos/"} or segments.intersection({"examples", "example", "samples", "sample", "demo", "demos"}):
+        return 6
+    if module in {"scripts/", "tools/", "tooling/"} or segments.intersection({"scripts", "tools", "tooling"}):
+        return 4
+    if segments.intersection({"benchmark", "benchmarks", "perf"}):
+        return 5
+    return 0
+
+
+def profile_rank_key(profile: dict) -> tuple:
+    internal_downstream = [item for item in profile.get("depends_on", []) if item != "external"]
+    empty_inferred = 1 if not profile.get("files") and not profile.get("symbols") else 0
+    return (
+        profile_surface_penalty(profile),
+        empty_inferred,
+        -len(profile.get("depended_by", [])),
+        -len(internal_downstream),
+        -len(profile.get("symbols", [])),
+        -len(profile.get("files", [])),
+        profile.get("module", ""),
+    )
+
+
+def representative_profiles(profiles: list[dict], limit: int = 6) -> list[dict]:
+    with_symbols = [profile for profile in profiles if profile.get("symbols")]
+    if not with_symbols:
+        return []
+    core = [profile for profile in with_symbols if profile_surface_penalty(profile) <= 2]
+    pool = core or with_symbols
+    return sorted(pool, key=profile_rank_key)[:limit]
+
+
+def file_stems(profile: dict, limit: int = 6) -> list[str]:
+    stems = []
+    for rel in profile.get("files", []):
+        stem = Path(rel).stem
+        if stem and stem not in {"__init__", "index"}:
+            stems.append(stem)
+    return unique(stems)[:limit]
+
+
+def script_role_from_names(names: list[str]) -> str:
+    joined = " ".join(names).lower()
+    categories = []
+    if re.search(r"\b(run|main|cli|start|serve|launch)\b", joined):
+        categories.append("命令入口")
+    if re.search(r"(smoke|check|verify|test|validate)", joined):
+        categories.append("烟测/验证")
+    if re.search(r"(export|render|report|generate|build|dump)", joined):
+        categories.append("导出/报告")
+    if re.search(r"(bench|perf|profile|time|speed)", joined):
+        categories.append("性能观测")
+    if re.search(r"(train|fit|eval|infer|predict)", joined):
+        categories.append("训练/推理任务")
+    if re.search(r"(migrate|seed|sync|clean|convert)", joined):
+        categories.append("数据/工程维护")
+    return "、".join(unique(categories)[:3]) or "辅助脚本"
 
 
 def role_for_module(name: str, profile: dict | None = None) -> str:
     lower = name.lower()
     if lower == "scripts/":
-        return "启动、烟测、导出、性能脚本"
+        if profile:
+            stems = file_stems(profile, 5)
+            sample = f"；代表文件 {', '.join(stems[:3])}" if stems else ""
+            return f"{script_role_from_names(stems)}{sample}"
+        return "脚本入口与工程辅助"
     if "pipeline" in lower:
         return "主流程编排和数据结构汇合点"
     if "depth" in lower:
@@ -444,11 +647,37 @@ def role_for_module(name: str, profile: dict | None = None) -> str:
         return "数据读取、预处理或缓存"
     if "monitor" in lower:
         return "运行观测和旁路探针"
+    if lower.endswith("/core") or "/core" in lower:
+        return "核心对象、主流程和关键状态转换"
+    if lower.endswith("/errors") or "/errors" in lower or "exception" in lower:
+        return "错误类型、异常边界和失败语义"
+    if lower.endswith("/types") or "/types" in lower:
+        return "类型契约、请求/响应字段和公共接口声明"
+    if lower.endswith("/utils") or "/utils" in lower or "helper" in lower:
+        return "支撑工具、输入归一化和边界适配"
+    if lower.endswith("/index") or lower.endswith("/main"):
+        return "包入口、导出边界和默认装配"
+    if any(mark in lower for mark in ["route", "view", "page", "api"]):
+        return "请求入口、页面路由或接口边界"
+    if any(mark in lower for mark in ["schema", "contract", "dto", "types"]):
+        return "数据契约、类型声明或字段边界"
+    if any(mark in lower for mark in ["json", "template", "render"]):
+        return "序列化、模板渲染或输出适配"
     if lower == "tests/":
         return "行为验证和回归保护"
     if lower == "(root)":
         return "根目录级源码、启动说明或工程配置"
     if profile:
+        stems = file_stems(profile, 6)
+        joined = " ".join(stems).lower()
+        if re.search(r"(app|application|ctx|context|request|response|session)", joined):
+            return f"应用对象、请求上下文或生命周期边界；代表文件 {', '.join(stems[:3])}"
+        if re.search(r"(cli|command|main)", joined):
+            return f"命令行入口与任务调度；代表文件 {', '.join(stems[:3])}"
+        if re.search(r"(config|settings|env|option)", joined):
+            return f"配置装配、默认值和覆盖来源；代表文件 {', '.join(stems[:3])}"
+        if re.search(r"(helper|utils?|support|compat)", joined):
+            return f"支撑工具和兼容层；代表文件 {', '.join(stems[:3])}"
         file_count = len(profile.get("files", []))
         symbol_count = len(profile.get("symbols", []))
         depends = [item for item in profile.get("depends_on", []) if item != "external"]
@@ -534,6 +763,27 @@ def symbol_effect_hint(item: dict) -> str:
     return "静态未见 I/O 关键词，优先按局部转换阅读"
 
 
+def symbol_rank_key(item: dict) -> tuple:
+    name = item.get("name", "")
+    lower = name.lower()
+    path = item.get("path", "")
+    kind = item.get("kind", "")
+    segments = set(path_segments(path))
+    surface = 1 if segments.intersection(SURFACE_SEGMENTS) else 0
+    private = 1 if lower.startswith("_") and not lower.startswith("__") else 0
+    if lower in {"main", "run", "execute"} or lower.startswith(("run_", "create_", "build_")):
+        role = 0
+    elif kind == "class":
+        role = 1
+    elif any(mark in lower for mark in ["config", "settings", "state", "input", "output", "result", "schema"]):
+        role = 2
+    elif any(mark in lower for mark in ["load", "parse", "dispatch", "handle", "process", "render", "save", "export"]):
+        role = 3
+    else:
+        role = 4
+    return (surface, private, role, path, int(item.get("line", 0)), name)
+
+
 def render_symbol_facts(item: dict, profile: dict) -> str:
     depends = [dep for dep in profile.get("depends_on", []) if dep != "external"]
     upstream = ", ".join(profile.get("depended_by", [])[:3]) or "未发现模块级上游 import"
@@ -552,11 +802,34 @@ def render_symbol_facts(item: dict, profile: dict) -> str:
     )
 
 
+def script_symbol_role_hint(item: dict) -> str:
+    path = item.get("path", "")
+    stem = Path(path).stem
+    name = item.get("name", "")
+    role = script_role_from_names([stem, name])
+    lower = f"{stem} {name}".lower()
+    if "parse" in lower and "arg" in lower:
+        return f"{stem} 的参数入口，先看默认值、路径参数和开关如何传入主函数"
+    if role == "命令入口":
+        return f"{stem} 的执行入口，先看参数装配、调用的核心模块和退出/产物"
+    if "烟测" in role or "验证" in role:
+        return f"{stem} 的验证节点，先看断言对象、输入样本和失败信号"
+    if "导出" in role or "报告" in role:
+        return f"{stem} 的产物生成节点，先看读取来源、输出格式和落盘位置"
+    if "性能" in role:
+        return f"{stem} 的性能观测节点，先看计时范围、统计口径和输出字段"
+    if "训练" in role or "推理" in role:
+        return f"{stem} 的任务节点，先看数据来源、模型调用和结果收口"
+    return f"{stem} 脚本内局部节点，先判断它服务入口、验证、产物还是维护流程"
+
+
 def object_role_hint(item: dict, profile: dict) -> str:
     name = item.get("name", "")
     lower = name.lower()
     path = item.get("path", "").lower()
     module = profile.get("module", "")
+    if "scripts/" in module:
+        return script_symbol_role_hint(item)
     if item.get("kind") == "class":
         if any(mark in lower for mark in ["record", "sample", "input", "output", "state", "result", "config"]):
             return "数据结构/契约边界，先看字段含义和消费方"
@@ -571,6 +844,14 @@ def object_role_hint(item: dict, profile: dict) -> str:
         return "入口或任务执行函数，先看参数装配、主调用和输出收口"
     if "parse_arg" in lower:
         return "命令行参数解析，先看默认值、路径参数和开关"
+    if any(mark in lower for mark in ["dispatch", "route", "view", "request", "response"]):
+        return "请求/响应分发节点，先看路由入口、上下文读取和返回对象"
+    if any(mark in lower for mark in ["session", "context", "ctx", "stack"]):
+        return "运行上下文或会话状态节点，先看生命周期、创建点和释放点"
+    if any(mark in lower for mark in ["template", "json", "serialize", "deserialize"]):
+        return "渲染/序列化适配节点，先看输入对象、格式转换和输出边界"
+    if any(mark in lower for mark in ["command", "cli", "option"]):
+        return "命令行接口节点，先看参数来源、回调和错误出口"
     if "cuda" in lower or "memory" in lower or "mem" in lower:
         return "设备/显存观测函数，先看读取口径和调用时机"
     if "time" in lower or "stage" in lower or "timer" in lower:
@@ -589,9 +870,6 @@ def object_role_hint(item: dict, profile: dict) -> str:
         return "评估指标节点，先看度量输入、统计口径和输出字段"
     if any(mark in lower for mark in ["loss", "train", "forward", "patch"]):
         return "训练/推理节点，先看张量输入、梯度边界和返回值"
-    if "scripts/" in module:
-        script_name = Path(item.get("path", "")).stem
-        return f"{script_name} 脚本内对象，先判断它是入口、计时、导出还是烟测辅助"
     if "test" in path:
         return "测试验证对象，先看它保护的行为和断言边界"
     return f"{module or '当前模块'} 中的局部处理节点，先从调用证据和返回值定位职责"
@@ -683,19 +961,19 @@ def render_reading_ladder(report: dict) -> str:
       <div class="ladder-step">
         <b>L3</b>
         <strong>先看系统分层</strong>
-        <span>回答“这个项目由哪些层组成，主链从哪里到哪里”。</span>
+        <span>只判断层：入口、核心领域、支撑、验证分别在哪里，不进入函数细节。</span>
       </div>
       <div class="ladder-arrow">→</div>
       <div class="ladder-step">
         <b>L2</b>
         <strong>再看模块边界</strong>
-        <span>回答“哪个模块依赖谁，哪里可能耦合或断裂”。</span>
+        <span>只判断边：谁依赖谁、谁被谁依赖、哪些模块是主链或边缘。</span>
       </div>
       <div class="ladder-arrow">→</div>
       <div class="ladder-step">
         <b>L1</b>
         <strong>最后挑函数/类</strong>
-        <span>代表卡看局部职责，全量索引定位 {symbol_count} / {symbol_total} 个对象。</span>
+        <span>看对象：代表卡负责解释职责，全量索引定位 {symbol_count} / {symbol_total} 个对象。</span>
       </div>
     </div>
     """
@@ -730,8 +1008,8 @@ def render_module_table(profiles: list[dict]) -> str:
 
 def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool) -> str:
     groups = []
-    for profile in profiles[:6]:
-        symbols = profile["symbols"][:6]
+    for profile in representative_profiles(profiles):
+        symbols = sorted(profile["symbols"], key=symbol_rank_key)[:6]
         if not symbols:
             continue
         cards = []
@@ -2548,7 +2826,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           <h2>L3 全局分层架构</h2>
           <span class="tag">从入口层到验证层</span>
         </header>
-        <p class="muted">阅读顺序是 L3 → L2 → L1：先用 L3 确认系统层次，再用 L2 看模块之间的依赖边界，最后在 L1 或全量索引里挑具体函数。</p>
+        <p class="muted">读法固定为 L3 → L2 → L1：L3 是地图，只看系统层；L2 是边界，只看模块依赖；L1 是放大镜，才进入函数、类、方法。这样同一份报告可以一次读完整体，也能从任意对象跳回证据位置。</p>
         {render_reading_ladder(report)}
         {render_layer_diagram(profiles, report)}
       </section>

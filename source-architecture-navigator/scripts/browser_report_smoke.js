@@ -202,8 +202,15 @@ function pageSmoke() {
     }
 
     const search = document.querySelector("#symbolSearch");
+    const queryRow = Array.from(document.querySelectorAll(".symbol-row")).find((row) => {
+      const name = (row.dataset.symbolName || "").trim();
+      const module = (row.dataset.symbolModule || "").trim();
+      return name.length >= 2 || module.length >= 2;
+    });
+    const filterQuery = (queryRow?.dataset.symbolName || queryRow?.dataset.symbolModule || "").trim();
+    summary.filterQuery = filterQuery;
     if (search) {
-      search.value = "run_pair";
+      search.value = filterQuery;
       search.dispatchEvent(new Event("input", { bubbles: true }));
     }
     await sleep(80);
@@ -296,7 +303,8 @@ function assertSmoke(summary, reloadSummary, dragSummary) {
   if (!summary.sourceExport.includes("原文：") || !summary.sourceExport.includes("\n笔记：browser smoke note")) failures.push("source export format is wrong");
   if (summary.selectionEditors !== 1 || !summary.selectionSaved) failures.push("text selection did not open and save a note");
   if (!dragSummary.dragPersisted) failures.push("drag offset was not persisted");
-  if (summary.filteredRows < 1 || !summary.filteredCountText.includes(`/ ${summary.symbolRows}`)) failures.push("symbol filter did not operate on full inventory");
+  if (summary.symbolRows > 0 && !summary.filterQuery) failures.push("symbol filter had no generic query candidate");
+  if (summary.filterQuery && (summary.filteredRows < 1 || !summary.filteredCountText.includes(`/ ${summary.symbolRows}`))) failures.push("symbol filter did not operate on full inventory");
   if (!summary.noOldExportLabels) failures.push("old export labels are still visible");
   if (!summary.noVisibleNoteHint) failures.push("visible note hint text is still present");
   if (reloadSummary.savedViewsAfterReload < 1 || !reloadSummary.exportAfterReload.includes("browser smoke note")) failures.push("note did not survive reload");
