@@ -425,7 +425,7 @@ def build_module_profiles(report: dict) -> list[dict]:
     return sorted(result, key=lambda item: (-len(item["symbols"]), item["module"]))
 
 
-def role_for_module(name: str) -> str:
+def role_for_module(name: str, profile: dict | None = None) -> str:
     lower = name.lower()
     if lower == "scripts/":
         return "启动、烟测、导出、性能脚本"
@@ -445,7 +445,24 @@ def role_for_module(name: str) -> str:
         return "运行观测和旁路探针"
     if lower == "tests/":
         return "行为验证和回归保护"
-    return "源码模块，需结合入口和调用边继续确认"
+    if lower == "(root)":
+        return "根目录级源码、启动说明或工程配置"
+    if profile:
+        file_count = len(profile.get("files", []))
+        symbol_count = len(profile.get("symbols", []))
+        depends = [item for item in profile.get("depends_on", []) if item != "external"]
+        depended_by = profile.get("depended_by", [])
+        if depends and depended_by:
+            return f"{file_count} 个文件 / {symbol_count} 个对象，连接 {', '.join(depends[:2])} 与 {', '.join(depended_by[:2])}"
+        if depends:
+            return f"{file_count} 个文件 / {symbol_count} 个对象，向下使用 {', '.join(depends[:3])}"
+        if depended_by:
+            return f"{file_count} 个文件 / {symbol_count} 个对象，被 {', '.join(depended_by[:3])} 引用"
+        if symbol_count:
+            return f"{file_count} 个文件 / {symbol_count} 个对象，当前静态 import 边较少"
+        if file_count:
+            return f"{file_count} 个源码文件，主要用于局部实现或配置承载"
+    return "根路径或小型模块承载层"
 
 
 def coupling_label(profile: dict) -> tuple[str, str]:
@@ -462,6 +479,76 @@ def coupling_label(profile: dict) -> tuple[str, str]:
 def symbol_signature(item: dict) -> str:
     signature = item.get("signature") or item.get("name", "")
     return compact(signature, 120)
+
+
+def signature_inputs(item: dict) -> str:
+    signature = item.get("signature") or ""
+    match = re.search(r"\((.*?)\)", signature)
+    if not match:
+        return "无显式参数"
+    params = []
+    for raw in match.group(1).split(","):
+        param = raw.strip()
+        if not param or param in {"self", "cls"}:
+            continue
+        params.append(compact(param.split("=", 1)[0].strip(), 36))
+    return ", ".join(params[:5]) if params else "无显式业务参数"
+
+
+def signature_output(item: dict) -> str:
+    signature = item.get("signature") or ""
+    match = re.search(r"\)\s*->\s*([^:]+)", signature)
+    if match:
+        return compact(match.group(1).strip(), 54)
+    name = item.get("name", "").lower()
+    kind = item.get("kind", "symbol")
+    if kind == "class":
+        return "实例对象 / 类型边界"
+    if "__init__" in name:
+        return "实例状态"
+    if any(mark in name for mark in ["build", "make", "create"]):
+        return "构造结果"
+    if any(mark in name for mark in ["load", "read", "parse", "fetch"]):
+        return "读取或解析结果"
+    if any(mark in name for mark in ["save", "write", "export", "render"]):
+        return "输出产物或落盘结果"
+    return "返回值由函数体和调用方消费"
+
+
+def symbol_effect_hint(item: dict) -> str:
+    name = item.get("name", "").lower()
+    path = item.get("path", "").lower()
+    if any(mark in name for mark in ["save", "write", "export", "render"]):
+        return "输出、渲染或落盘候选"
+    if any(mark in name for mark in ["load", "read", "fetch", "parse"]):
+        return "读取、解析或缓存候选"
+    if any(mark in name for mark in ["run", "main", "execute", "handle", "process"]):
+        return "流程编排或命令触发"
+    if any(mark in path for mark in ["/eval", "\\eval", "/monitor", "\\monitor"]):
+        return "指标、观测或报告输出"
+    if any(mark in path for mark in ["/train", "\\train", "/model", "\\model"]):
+        return "张量计算、模型状态或训练数据"
+    if any(mark in path for mark in ["/flow", "\\flow", "/depth", "\\depth"]):
+        return "几何/深度转换，注意张量方向"
+    return "静态未见 I/O 关键词，优先按局部转换阅读"
+
+
+def render_symbol_facts(item: dict, profile: dict) -> str:
+    depends = [dep for dep in profile.get("depends_on", []) if dep != "external"]
+    upstream = ", ".join(profile.get("depended_by", [])[:3]) or "未发现模块级上游 import"
+    downstream = ", ".join(depends[:3]) or "无明显模块级下游 import"
+    facts = [
+        ("模块职责", role_for_module(profile["module"], profile)),
+        ("签名边界", symbol_signature(item)),
+        ("输入", signature_inputs(item)),
+        ("输出", signature_output(item)),
+        ("调用证据", f"上游 {upstream} / 下游 {downstream}"),
+        ("副作用", symbol_effect_hint(item)),
+    ]
+    return "".join(
+        f"<span><b>{h(label)}</b>{h(value)}</span>"
+        for label, value in facts
+    )
 
 
 def render_full_parse_matrix(report: dict, profiles: list[dict], risks: list[dict]) -> str:
@@ -502,7 +589,7 @@ def render_project_table(report: dict, project_hint: str, primary: str, profiles
         ("核心模块候选", ", ".join(profile["module"] for profile in profiles[:6]) or UNKNOWN),
         ("配置/manifest", ", ".join((manifests + report.get("config_files", []))[:5]) or "未发现"),
         ("测试入口", ", ".join(report.get("test_files", [])[:5]) or "未发现"),
-        ("边界提醒", "这是静态全解析报告；运行时行为、废弃代码和真实链路仍需下一轮证据确认。"),
+        ("边界提醒", "这是静态一次全解析报告；本页承担完整阅读地图，运行时行为用测试、命令输出或日志补证。"),
     ]
     body = "".join(f"<tr><th>{h(key)}</th><td>{h(value)}</td></tr>" for key, value in rows)
     return f"<table class=\"fact-table\"><tbody>{body}</tbody></table>"
@@ -552,7 +639,7 @@ def render_module_table(profiles: list[dict]) -> str:
             f"""
             <tr>
               <td><b>{h(profile['module'])}</b></td>
-              <td>{h(role_for_module(profile['module']))}</td>
+              <td>{h(role_for_module(profile['module'], profile))}</td>
               <td>{h(len(profile['files']))}</td>
               <td>{h(len(profile['symbols']))}</td>
               <td>{h(', '.join(profile['depends_on'][:5]) or '无明显内部依赖')}</td>
@@ -571,8 +658,8 @@ def render_module_table(profiles: list[dict]) -> str:
 
 def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool) -> str:
     groups = []
-    for profile in profiles[:8]:
-        symbols = profile["symbols"][:8]
+    for profile in profiles[:6]:
+        symbols = profile["symbols"][:6]
         if not symbols:
             continue
         cards = []
@@ -583,20 +670,60 @@ def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool
                 f"""
                 <article class="func-card" data-symbol-text="{h(search_text).lower()}">
                   <div class="sig">{h(symbol_signature(item))}</div>
-                  <p>{h(infer_symbol_note(item, profile["module"]))}</p>
                   <div class="meta"><span>{h(badge)}</span>{path_link(f"{item['path']}:{item['line']}", scan_root, linkable)}</div>
+                  <div class="func-facts">{render_symbol_facts(item, profile)}</div>
                 </article>
                 """
             )
         groups.append(
             f"""
             <details class="function-group" open>
-              <summary>{h(profile['module'])} <small>{h(role_for_module(profile['module']))}</small></summary>
+              <summary>{h(profile['module'])} <small>{h(role_for_module(profile['module'], profile))} · {len(symbols)} 个代表符号</small></summary>
               {''.join(cards)}
             </details>
             """
         )
     return "\n".join(groups) or '<p class="muted">未抽取到函数、类或组件定义。</p>'
+
+
+def render_symbol_inventory(report: dict, scan_root: Path, linkable: bool) -> str:
+    symbols = report.get("symbol_samples", [])
+    if not symbols:
+        return '<p class="muted">未抽取到函数、类或组件定义。</p>'
+    rows = []
+    for index, item in enumerate(symbols, start=1):
+        name = item.get("name", UNKNOWN)
+        kind = item.get("kind", "symbol")
+        path = item.get("path", "")
+        line = item.get("line", 1)
+        module = module_key(path)
+        location = f"{path}:{line}"
+        signature = symbol_signature(item)
+        search_text = f"{index} {name} {kind} {module} {signature} {location}"
+        rows.append(
+            f"""
+            <tr id="symbol-{index}" class="symbol-row"
+                data-symbol-text="{h(search_text).lower()}"
+                data-symbol-name="{h(name)}"
+                data-symbol-kind="{h(kind)}"
+                data-symbol-module="{h(module)}"
+                data-symbol-location="{h(location)}">
+              <td class="symbol-index">{index}</td>
+              <td><code>{h(name)}</code><small>{h(compact(signature, 140))}</small></td>
+              <td>{h(kind)}</td>
+              <td>{h(module)}</td>
+              <td>{path_link(location, scan_root, linkable)}</td>
+            </tr>
+            """
+        )
+    return f"""
+    <div class="inventory-wrap">
+      <table class="inventory-table">
+        <thead><tr><th>#</th><th>符号</th><th>类型</th><th>层级/模块</th><th>证据位置</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </div>
+    """
 
 
 def infer_symbol_note(item: dict, module: str = "") -> str:
@@ -657,7 +784,7 @@ def build_risks(report: dict, profiles: list[dict]) -> list[dict]:
                     "level": "P1",
                     "kind": f"{profile['module']} 耦合偏高",
                     "text": f"该模块同时依赖 {len(profile['depends_on'])} 个模块，并被 {len(profile['depended_by'])} 个模块依赖。",
-                    "fix": "下一轮追该模块的入口和数据契约，先判断是否只是编排层。"
+                    "fix": "在全量符号索引中定位该模块入口和契约对象，先判断它是编排层还是领域层。"
                 }
             )
     return risks[:8]
@@ -681,11 +808,12 @@ def render_risks(risks: list[dict]) -> str:
 
 def render_dual_routes(route: list[dict], report: dict, scan_root: Path, linkable: bool) -> str:
     beginner = []
-    for idx, item in enumerate(route[:5], start=1):
+    for idx, item in enumerate(route[:4], start=1):
         beginner.append(
-            f"<li><b>{path_link(item['path'], scan_root, linkable)}</b><span>{h(item['purpose'])}；暂时跳过：{h(item['skip'])}</span></li>"
+            f"<li><b>{path_link(item['path'], scan_root, linkable)}</b><span>{h(item['purpose'])}</span></li>"
         )
-    expert_symbols = report.get("symbol_samples", [])[:5]
+    seen_paths = {item["path"] for item in route[:4]}
+    expert_symbols = [item for item in report.get("symbol_samples", []) if item.get("path") not in seen_paths][:4]
     expert = []
     for item in expert_symbols:
         location = f"{item['path']}:{item['line']}"
@@ -708,7 +836,7 @@ def render_contract_candidates(report: dict, scan_root: Path, linkable: bool) ->
     candidates = [
         item for item in report.get("symbol_samples", [])
         if re.search(r"(Input|Output|Config|State|Result|Summary|Schema|Payload|Request|Response)", item.get("name", ""))
-    ][:12]
+    ][:8]
     rows = []
     for item in candidates:
         rows.append(
@@ -717,7 +845,6 @@ def render_contract_candidates(report: dict, scan_root: Path, linkable: bool) ->
               <td>{code(item['name'])}</td>
               <td>{h(item.get('kind', 'symbol'))}</td>
               <td>{path_link(f"{item['path']}:{item['line']}", scan_root, linkable)}</td>
-              <td>{h(infer_symbol_note(item))}</td>
             </tr>
             """
         )
@@ -725,7 +852,7 @@ def render_contract_candidates(report: dict, scan_root: Path, linkable: bool) ->
         return '<p class="muted">未识别到明显的 Input/Output/Config/State 等契约对象。</p>'
     return f"""
     <table>
-      <thead><tr><th>对象</th><th>类型</th><th>位置</th><th>下一步检查</th></tr></thead>
+      <thead><tr><th>对象</th><th>类型</th><th>位置</th></tr></thead>
       <tbody>{''.join(rows)}</tbody>
     </table>
     """
@@ -1182,7 +1309,7 @@ def render_html(report: dict, scan_root: Path, title: str, subtitle: str | None)
           </div>
           <div class="lane" data-layer="L3">
             <h3>功能/数据流</h3>
-            <p>用下一轮源码阅读确认输入、转换、输出和副作用，而不是一次画完整大网。</p>
+            <p>用本报告的符号索引和证据表确认输入、转换、输出和副作用，不把所有节点塞进一张大网。</p>
           </div>
         </div>
         <div class="flow" aria-label="功能流草图">
@@ -1205,7 +1332,7 @@ def render_html(report: dict, scan_root: Path, title: str, subtitle: str | None)
       <section id="evidence">
         <header>
           <h2>证据表</h2>
-          <span class="tag">推断必须留待下一轮查证</span>
+          <span class="tag">推断必须标注证据等级</span>
         </header>
         {render_evidence(evidence_rows)}
       </section>
@@ -1698,6 +1825,64 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       color: var(--blue);
       font-weight: 800;
     }}
+    .func-facts {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }}
+    .func-facts span {{
+      min-height: 48px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 250, 240, .82);
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.35;
+    }}
+    .func-facts b {{
+      display: block;
+      margin-bottom: 3px;
+      color: var(--amber);
+      font-size: 11px;
+    }}
+    .inventory-wrap {{
+      max-height: 640px;
+      overflow: auto;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255,250,240,.96), rgba(247,243,234,.94)),
+        var(--panel);
+    }}
+    .inventory-table {{
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }}
+    .inventory-table thead th {{
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }}
+    .inventory-table small {{
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font: 12px/1.4 "Cascadia Mono", Consolas, monospace;
+      word-break: break-word;
+    }}
+    .inventory-table code {{
+      color: var(--blue);
+      font-weight: 800;
+    }}
+    .symbol-index {{
+      width: 52px;
+      color: var(--amber);
+      font-weight: 900;
+    }}
+    .symbol-row.is-hidden {{ display: none; }}
     .timeline {{
       display: grid;
       gap: 12px;
@@ -2123,6 +2308,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       main {{ padding: 36px 18px 56px; }}
       .map-board {{ min-height: unset; }}
       .hero-actions {{ flex-direction: column; align-items: stretch; }}
+      .func-facts {{ grid-template-columns: 1fr; }}
     }}
     @media print {{
       body {{ background: #fff; }}
@@ -2151,6 +2337,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         <a href="#layers">L3 全局分层</a>
         <a href="#modules">L2 模块关系</a>
         <a href="#functions">L1 函数地图</a>
+        <a href="#inventory">全量符号索引</a>
         <a href="#golden">Golden Path</a>
         <a href="#contracts">配置与契约</a>
         <a href="#risks">问题诊断</a>
@@ -2182,13 +2369,12 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       <section id="reader-notes" class="reader-notes" data-no-note>
         <header>
           <h2>阅读笔记</h2>
-          <span class="tag">点选位置 + 选中文句</span>
         </header>
         <div class="reader-notes-grid">
           <div class="note-tools">
             <select id="noteExportMode" aria-label="笔记导出格式">
-              <option value="ordered">按照顺序：用户记录内容</option>
-              <option value="source">原文对照：原文 + 用户记录内容</option>
+              <option value="ordered">序号 + 笔记</option>
+              <option value="source">原文 + 笔记</option>
             </select>
             <button type="button" class="secondary" data-action="copy-notes">复制导出内容</button>
             <button type="button" class="secondary" data-action="download-notes">下载笔记</button>
@@ -2236,15 +2422,27 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       <section id="functions">
         <header>
           <h2>L1 逐函数地图</h2>
-          <span class="tag">每个模块先列可下钻对象</span>
+          <span class="tag">代表对象用于快速定位</span>
         </header>
-        <p class="muted">这里不是完整语义证明，而是一次全解析的函数索引：你可以直接挑一个函数继续要求 L1 输入/输出/副作用图。</p>
+        <p class="muted">这里保留每个核心模块的代表对象，避免把同类职责重复解释成大段文字；完整函数、类、方法清单在下一节全量索引中交叉引用。</p>
         <div class="toolbar">
           <input id="symbolSearch" type="search" placeholder="筛选函数、类、模块或路径" aria-label="筛选函数、类、模块或路径">
           <button type="button" class="secondary" data-action="clear-search">清空筛选</button>
           <span class="count" id="symbolCount">显示全部符号</span>
         </div>
         {render_function_groups(profiles, scan_root, linkable)}
+      </section>
+
+      <section id="inventory">
+        <header>
+          <h2>全量符号索引</h2>
+          <span class="tag">最多 260 个源码对象</span>
+        </header>
+        <p class="muted">这是本报告的完整函数/类/方法目录：每一行都回到模块层级和证据位置，适合复制后做交叉引用、排查重复职责或指定下一张 L1 小图。</p>
+        <div class="toolbar">
+          <button type="button" class="secondary" data-action="copy-symbol-inventory">复制当前索引</button>
+        </div>
+        {render_symbol_inventory(report, scan_root, linkable)}
       </section>
 
       <section id="golden">
@@ -2321,7 +2519,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       </section>
 
       <footer>
-        本报告来自静态源码扫描和启发式归类。它的目标是一次性建立完整阅读地图，不替代运行测试、精确调用链搜索和人工源码复核。
+        本报告来自静态源码扫描和启发式归类。它的目标是一次性建立完整阅读地图；静态结论用路径证据标注，运行时行为用测试、命令输出或日志补证。
       </footer>
     </main>
   <script>
@@ -2337,6 +2535,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     sections.forEach((section) => reveal.observe(section));
 
     const cards = Array.from(document.querySelectorAll('.func-card'));
+    const inventoryRows = Array.from(document.querySelectorAll('.symbol-row'));
     const groups = Array.from(document.querySelectorAll('.function-group'));
     const search = document.getElementById('symbolSearch');
     const count = document.getElementById('symbolCount');
@@ -2347,6 +2546,10 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       for (const card of cards) {{
         const hit = !q || (card.dataset.symbolText || '').includes(q);
         card.classList.toggle('is-hidden', !hit);
+      }}
+      for (const row of inventoryRows) {{
+        const hit = !q || (row.dataset.symbolText || '').includes(q);
+        row.classList.toggle('is-hidden', !hit);
         if (hit) visible++;
       }}
       for (const group of groups) {{
@@ -2354,7 +2557,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         group.classList.toggle('no-match', !hasHit);
         if (q && hasHit) group.open = true;
       }}
-      if (count) count.textContent = q ? `显示 ${{visible}} / ${{cards.length}} 个符号` : `显示全部 ${{cards.length}} 个符号`;
+      if (count) count.textContent = q ? `索引命中 ${{visible}} / ${{inventoryRows.length}} 个符号` : `全量 ${{inventoryRows.length}} 个符号`;
       window.requestAnimationFrame(placeAllLayerItems);
     }}
     search?.addEventListener('input', applyFilter);
@@ -2751,16 +2954,50 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function buildExport() {{
       const mode = noteExportMode?.value || 'ordered';
-      const sorted = sortedNotes();
+      const sorted = sortedNotes().filter(note => (note.text || '').trim());
       if (!sorted.length) return '';
       return sorted.map((note, index) => {{
         const body = (note.text || '').trim();
         if (mode === 'source') {{
-        const source = note.quote || note.label || '页面锚点';
-          return `${{index + 1}}. 原文：${{source}}\\n记录：${{body}}`;
+          const source = note.quote || note.label || '页面锚点';
+          return `原文：${{source}}\\n笔记：${{body}}`;
         }}
-        return `${{index + 1}}. 按照顺序：${{body}}`;
+        return `${{index + 1}}. ${{body}}`;
       }}).join('\\n\\n');
+    }}
+
+    function writeClipboard(text, fallbackElement = null) {{
+      if (!text) return;
+      if (navigator.clipboard?.writeText) {{
+        navigator.clipboard.writeText(text);
+        return;
+      }}
+      const target = fallbackElement || document.createElement('textarea');
+      if (!fallbackElement) {{
+        target.value = text;
+        target.style.position = 'fixed';
+        target.style.left = '-9999px';
+        document.body.append(target);
+      }}
+      target.focus();
+      target.select();
+      document.execCommand('copy');
+      if (!fallbackElement) target.remove();
+    }}
+
+    function buildSymbolInventoryText() {{
+      const rows = inventoryRows.filter(row => !row.classList.contains('is-hidden'));
+      return rows.map((row, index) => {{
+        const name = row.dataset.symbolName || '';
+        const kind = row.dataset.symbolKind || '';
+        const module = row.dataset.symbolModule || '';
+        const location = row.dataset.symbolLocation || '';
+        return `${{index + 1}}. ${{name}} | ${{kind}} | ${{module}} | ${{location}}`;
+      }}).join('\\n');
+    }}
+
+    function copySymbolInventory() {{
+      writeClipboard(buildSymbolInventoryText());
     }}
 
     function attachNoteInteraction(element, note, host, openOnTap = false) {{
@@ -2775,7 +3012,14 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           element.dataset.wasDragged = 'false';
         }}
       }});
-      element.addEventListener('pointerdown', (event) => {{
+      element.addEventListener('dblclick', (event) => {{
+        if (!openOnTap) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openInlineNote({{ node: host, quote: note.quote || '', range: null }});
+      }});
+      let lastPointerDragAt = 0;
+      function beginDrag(event, pointerId = null) {{
         if (typeof event.button === 'number' && event.button !== 0) return;
         dragState = {{
           element,
@@ -2788,10 +3032,10 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           startDy: Number(note.dy) || 0,
           moved: false
         }};
-        element.setPointerCapture?.(event.pointerId);
+        if (pointerId !== null) element.setPointerCapture?.(pointerId);
         showAnchorEffects(note.id, element);
-      }});
-      element.addEventListener('pointermove', (event) => {{
+      }}
+      function moveDrag(event) {{
         if (!dragState || dragState.element !== element) return;
         const deltaX = event.clientX - dragState.startX;
         const deltaY = event.clientY - dragState.startY;
@@ -2804,11 +3048,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         element.classList.add('is-dragging');
         placeLayerItem(element, host, note);
         showAnchorEffects(note.id, element);
-      }});
-      element.addEventListener('pointerup', (event) => {{
+      }}
+      function endDrag(event, pointerId = null) {{
         if (!dragState || dragState.element !== element) return;
         const moved = dragState.moved;
-        element.releasePointerCapture?.(event.pointerId);
+        if (pointerId !== null) element.releasePointerCapture?.(pointerId);
         element.classList.remove('is-dragging');
         dragState = null;
         suppressDocumentClick();
@@ -2821,16 +3065,27 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           showAnchorEffects(note.id, element);
           return;
         }}
-        if (openOnTap) {{
-          event.preventDefault();
-          event.stopPropagation();
-          openInlineNote({{ node: host, quote: note.quote || '', range: null }});
-        }}
-      }});
-      element.addEventListener('pointercancel', () => {{
+      }}
+      function cancelDrag() {{
         element.classList.remove('is-dragging');
         dragState = null;
         hideAnchorEffects(note.id);
+      }}
+      element.addEventListener('pointerdown', (event) => {{
+        lastPointerDragAt = Date.now();
+        beginDrag(event, event.pointerId);
+      }});
+      element.addEventListener('pointermove', moveDrag);
+      element.addEventListener('pointerup', (event) => endDrag(event, event.pointerId));
+      element.addEventListener('pointercancel', cancelDrag);
+      element.addEventListener('mousedown', (event) => {{
+        if (Date.now() - lastPointerDragAt < 180) return;
+        beginDrag(event, null);
+      }});
+      element.addEventListener('mousemove', moveDrag);
+      element.addEventListener('mouseup', (event) => endDrag(event, null));
+      element.addEventListener('mouseleave', () => {{
+        if (dragState && dragState.element === element && !dragState.moved) cancelDrag();
       }});
     }}
 
@@ -2959,13 +3214,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     function copyNotes() {{
       const text = buildExport();
       if (!text) return;
-      if (navigator.clipboard?.writeText) {{
-        navigator.clipboard.writeText(text);
-      }} else if (notesExport) {{
-        notesExport.focus();
-        notesExport.select();
-        document.execCommand('copy');
-      }}
+      writeClipboard(text, notesExport);
     }}
 
     function downloadNotes() {{
@@ -3010,11 +3259,12 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         storeSet(themeKey, next);
         applyTheme(next);
       }}
+      if (action === 'copy-symbol-inventory') copySymbolInventory();
       if (action === 'copy-notes') copyNotes();
       if (action === 'download-notes') downloadNotes();
     }}
 
-    function openNoteFromClick(event) {{
+    function openNoteFromPointer(event) {{
       event.preventDefault();
       event.stopPropagation();
       const selection = window.getSelection();
@@ -3049,10 +3299,18 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         return;
       }}
       if (eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
-      openNoteFromClick(event);
+    }}
+
+    function handleDocumentDoubleClick(event) {{
+      if (eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
+      const editor = activeNoteHost ? layerEditorForHost(activeNoteHost) : null;
+      if (editor && editor.contains(event.target)) return;
+      if (activeNoteHost) finishInlineNote(activeNoteHost);
+      openNoteFromPointer(event);
     }}
 
     document.addEventListener('click', handleDocumentClick, true);
+    document.addEventListener('dblclick', handleDocumentDoubleClick, true);
   </script>
 </body>
 </html>

@@ -51,7 +51,13 @@ python scripts/render_navigation_html.py <repo-path> --output <outside-analysis-
 python scripts/render_navigation_html.py <source.zip> --output <outside-analysis-dir>/source_navigation_report.html --title "<project-name>"
 ```
 
-HTML 报告同样默认拒绝写入被扫描仓库。zip 输入默认只保留相对证据路径；若希望报告中的文件链接可点击，使用 `--extract-to <outside-analysis-dir>/source` 或 `--keep-temp`。报告应包含函数筛选、模块展开/收起、主路径高亮和证据表显隐。
+HTML 报告同样默认拒绝写入被扫描仓库。zip 输入默认只保留相对证据路径；若希望报告中的文件链接可点击，使用 `--extract-to <outside-analysis-dir>/source` 或 `--keep-temp`。报告应包含全量符号索引、函数筛选、索引复制、模块展开/收起、主路径高亮、证据表显隐、双击正文笔记和笔记导出。
+
+生成后可以用浏览器回归脚本检查关键交互：
+
+```bash
+node scripts/browser_report_smoke.js <outside-analysis-dir>/source_navigation_report.html
+```
 
 ## 输出解读
 

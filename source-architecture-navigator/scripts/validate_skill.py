@@ -19,6 +19,7 @@ REQUIRED_FILES = [
     "references/repo-probe-guide.md",
     "scripts/repo_probe.py",
     "scripts/render_navigation_html.py",
+    "scripts/browser_report_smoke.js",
     "assets/source-architecture-navigator.html",
 ]
 
@@ -239,9 +240,12 @@ def _verify_html_report_behavior(html_report: Path) -> list[str]:
                 "L3 全局分层架构",
                 "L2 模块关系图",
                 "L1 逐函数地图",
+                "全量符号索引",
                 "Golden Path 核心路径识别",
                 "证据表",
                 "symbolSearch",
+                "copy-symbol-inventory",
+                "document.addEventListener('dblclick'",
                 "data-action=\"focus-golden\"",
                 "StereoArchitecturePipeline",
             ]:
