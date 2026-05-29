@@ -1975,7 +1975,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .inline-note-pad {{
       position: absolute;
       z-index: 30;
-      width: min(360px, calc(100vw - 32px));
+      width: min(300px, calc(100vw - 32px));
       padding: 0;
       border: 0;
       border-radius: 16px;
@@ -2006,9 +2006,9 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     .inline-note-view {{
       position: absolute;
       z-index: 29;
-      width: min(360px, calc(100vw - 32px));
-      min-height: 52px;
-      padding: 15px 18px;
+      width: min(300px, calc(100vw - 32px));
+      min-height: 48px;
+      padding: 13px 16px;
       border: 0;
       border-radius: 16px;
       background-color: var(--note-glass-base);
@@ -2021,7 +2021,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       -webkit-backdrop-filter: blur(4px) saturate(1.12);
       backdrop-filter: blur(4px) saturate(1.12);
       cursor: grab;
-      font: 600 15px/1.45 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
+      font: 600 14px/1.45 "Aptos", "Microsoft YaHei", "Segoe UI", sans-serif;
       overflow: hidden;
       text-overflow: ellipsis;
       touch-action: none;
@@ -2435,6 +2435,9 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     let activeAnchorNoteId = '';
     let dragState = null;
     let saveTimer = 0;
+    let suppressDocumentClickUntil = 0;
+    let suppressNextDocumentClick = false;
+    let suppressDocumentClickTimer = 0;
 
     function loadNotes() {{
       try {{
@@ -2455,6 +2458,15 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         saveNotes();
         renderNotes();
       }}, 180);
+    }}
+
+    function suppressDocumentClick(ms = 320) {{
+      window.clearTimeout(suppressDocumentClickTimer);
+      suppressNextDocumentClick = true;
+      suppressDocumentClickUntil = Date.now() + ms;
+      suppressDocumentClickTimer = window.setTimeout(() => {{
+        suppressNextDocumentClick = false;
+      }}, ms);
     }}
 
     function elementFromNode(node) {{
@@ -2589,7 +2601,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function noteLayerRect(host, note = null) {{
       const rect = host.getBoundingClientRect();
-      const maxWidth = Math.max(180, Math.min(360, window.innerWidth - 32));
+      const maxWidth = Math.max(180, Math.min(300, window.innerWidth - 32));
       const width = Math.min(maxWidth, Math.max(180, rect.width - 28));
       const hasPoint = note && Number.isFinite(note.relX) && Number.isFinite(note.relY);
       const anchorX = rect.left + (hasPoint ? rect.width * note.relX : 14);
@@ -2799,6 +2811,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         element.releasePointerCapture?.(event.pointerId);
         element.classList.remove('is-dragging');
         dragState = null;
+        suppressDocumentClick();
         if (moved) {{
           event.preventDefault();
           event.stopPropagation();
@@ -2858,7 +2871,12 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function finishInlineNote(host) {{
       const editor = layerEditorForHost(host);
-      if (!editor) return;
+      if (!editor) {{
+        activeNoteHost = null;
+        hideAnchorEffects();
+        renderNotes();
+        return;
+      }}
       const input = editor.querySelector('input');
       const noteId = editor.dataset.noteId;
       const text = cleanText(input?.value, 1600);
@@ -2915,11 +2933,6 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         note.updatedAt = new Date().toISOString();
         scheduleSave();
       }});
-      input.addEventListener('blur', () => {{
-        window.setTimeout(() => {{
-          if (!editor.contains(document.activeElement)) finishInlineNote(host);
-        }}, 120);
-      }});
       noteLayer?.append(editor);
       placeLayerItem(editor, host, note);
       attachNoteInteraction(editor, note, host, false);
@@ -2974,20 +2987,34 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     document.addEventListener('toggle', () => window.requestAnimationFrame(placeAllLayerItems), true);
 
     const noteIgnoreSelector = '[data-no-note], .report-nav, .hero-actions, button, input, textarea, select, summary';
-    let lastPointerNoteAt = 0;
 
-    function handleNoteTrigger(event) {{
-      const ignoredTarget = eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector);
-      if (activeNoteHost) {{
-        const current = activeNoteHost;
-        const editor = layerEditorForHost(current);
-        if (editor && editor.contains(event.target)) return false;
-        const nextHost = ignoredTarget ? null : noteHost(event.target);
-        finishInlineNote(current);
-        if (ignoredTarget) return false;
-        if (nextHost === current) return true;
+    function runAction(action) {{
+      if (action === 'focus-golden') pulse('golden');
+      if (action === 'expand-functions') groups.forEach(group => group.open = true);
+      if (action === 'collapse-functions') groups.forEach(group => group.open = false);
+      if (action === 'expand-functions' || action === 'collapse-functions') {{
+        window.requestAnimationFrame(placeAllLayerItems);
       }}
-      if (ignoredTarget) return false;
+      if (action === 'clear-search' && search) {{
+        search.value = '';
+        applyFilter();
+        search.focus();
+      }}
+      if (action === 'toggle-evidence') {{
+        const table = document.querySelector('#evidence table');
+        if (table) table.hidden = !table.hidden;
+        pulse('evidence');
+      }}
+      if (action === 'toggle-theme') {{
+        const next = document.body.classList.contains('theme-night') ? 'day' : 'night';
+        storeSet(themeKey, next);
+        applyTheme(next);
+      }}
+      if (action === 'copy-notes') copyNotes();
+      if (action === 'download-notes') downloadNotes();
+    }}
+
+    function openNoteFromClick(event) {{
       event.preventDefault();
       event.stopPropagation();
       const selection = window.getSelection();
@@ -3001,49 +3028,31 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
         clientX: event.clientX,
         clientY: event.clientY
       }});
-      return true;
     }}
 
-    document.addEventListener('pointerup', (event) => {{
-      if (typeof event.button === 'number' && event.button !== 0) return;
-      if (handleNoteTrigger(event)) lastPointerNoteAt = Date.now();
-    }}, true);
-
-    document.addEventListener('click', (event) => {{
-      const button = eventClosest(event, '[data-action]');
-      if (button) {{
-        const action = button.dataset.action;
-        if (action === 'focus-golden') pulse('golden');
-        if (action === 'expand-functions') groups.forEach(group => group.open = true);
-        if (action === 'collapse-functions') groups.forEach(group => group.open = false);
-        if (action === 'expand-functions' || action === 'collapse-functions') {{
-          window.requestAnimationFrame(placeAllLayerItems);
-        }}
-        if (action === 'clear-search' && search) {{
-          search.value = '';
-          applyFilter();
-          search.focus();
-        }}
-        if (action === 'toggle-evidence') {{
-          const table = document.querySelector('#evidence table');
-          if (table) table.hidden = !table.hidden;
-          pulse('evidence');
-        }}
-        if (action === 'toggle-theme') {{
-          const next = document.body.classList.contains('theme-night') ? 'day' : 'night';
-          storeSet(themeKey, next);
-          applyTheme(next);
-        }}
-        if (action === 'copy-notes') copyNotes();
-        if (action === 'download-notes') downloadNotes();
-        return;
-      }}
-      if (Date.now() - lastPointerNoteAt < 450) {{
+    function handleDocumentClick(event) {{
+      if (suppressNextDocumentClick || Date.now() < suppressDocumentClickUntil) {{
+        suppressNextDocumentClick = false;
+        window.clearTimeout(suppressDocumentClickTimer);
         event.preventDefault();
+        event.stopPropagation();
         return;
       }}
-      handleNoteTrigger(event);
-    }}, true);
+      const button = eventClosest(event, '[data-action]');
+      const editor = activeNoteHost ? layerEditorForHost(activeNoteHost) : null;
+      if (editor && editor.contains(event.target)) return;
+      if (activeNoteHost) {{
+        finishInlineNote(activeNoteHost);
+      }}
+      if (button) {{
+        runAction(button.dataset.action);
+        return;
+      }}
+      if (eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
+      openNoteFromClick(event);
+    }}
+
+    document.addEventListener('click', handleDocumentClick, true);
   </script>
 </body>
 </html>
