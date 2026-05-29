@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import sys
 import tempfile
+import tomllib
 import zipfile
 from collections import defaultdict
 from datetime import datetime
@@ -52,6 +54,22 @@ def unique(items: list[str]) -> list[str]:
 
 def code(value: object) -> str:
     return f"<code>{h(value)}</code>"
+
+
+def read_text_file(path: Path, limit: int = 300_000) -> str:
+    try:
+        data = path.read_bytes()[:limit]
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="ignore")
+
+
+def read_lines(scan_root: Path, rel: str, limit: int = 2_000) -> list[str]:
+    path = scan_root / rel
+    text = read_text_file(path)
+    if not text:
+        return []
+    return text.splitlines()[:limit]
 
 
 def strip_markdown(line: str) -> str:
@@ -157,25 +175,29 @@ def build_reading_route(report: dict) -> list[dict]:
     route: list[dict] = []
     for rel in paths[:5]:
         lower = rel.lower()
+        basename = Path(rel).name or rel
+        stem = Path(rel).stem or basename
+        route_label = compact(rel, 56)
         if "readme" in lower:
-            purpose = "确认项目目标、硬边界和推荐运行方式"
-            skip = "先跳过细碎安装兼容项"
+            purpose = f"读 {route_label} 中的项目目标、运行约束和禁止项"
+            skip = f"{basename} 的安装兼容细节暂时后置"
             level = "E3"
         elif lower.startswith("scripts/") or re.search(r"(^|/)(main|app|server|cli|index)\.", lower):
-            purpose = "确认真实入口如何装配参数和启动主链路"
-            skip = "先跳过实验脚本和一次性导出逻辑"
+            purpose = f"读 {route_label} 的参数装配、主调用和产物出口"
+            skip = f"先不展开 {stem} 之外的实验/维护脚本"
             level = "E3"
         elif "/pipeline/" in lower or "architecture_entry" in lower or "/routes" in lower or "/api" in lower:
-            purpose = "看核心编排：输入、转换、输出和模块边界"
-            skip = "先不深入底层工具函数"
+            purpose = f"读 {route_label} 的输入对象、转换步骤和返回边界"
+            skip = f"{basename} 调用的底层工具先只记名字"
             level = "E1"
         elif lower.endswith((".json", ".toml", ".yaml", ".yml", ".ini", ".cfg")):
-            purpose = "确认依赖、配置入口和启动约束"
-            skip = "先不展开每个依赖包"
+            purpose = f"读 {route_label} 的依赖、脚本命令和默认配置"
+            skip = f"{basename} 中的三方依赖细节先不逐个查"
             level = "E3"
         else:
-            purpose = "找到核心对象定义，建立下一张 L1 小图"
-            skip = "先跳过测试夹具和历史兼容分支"
+            symbol_name = next((item["name"] for item in report.get("symbol_samples", []) if item["path"] == rel), stem)
+            purpose = f"读 {route_label} 里的 {symbol_name} 定义和邻近返回/副作用"
+            skip = f"{basename} 的测试夹具、兼容分支和私有小工具先后置"
             level = "E1"
         line = next((str(item["line"]) for item in report.get("symbol_samples", []) if item["path"] == rel), "1")
         route.append({"path": rel, "purpose": purpose, "skip": skip, "evidence": f"{level} `{rel}:{line}`"})
@@ -228,6 +250,44 @@ def path_link(rel: str, scan_root: Path, linkable: bool) -> str:
     if linkable and target.exists():
         return f'<a href="{h(target.resolve().as_uri())}">{label}</a>'
     return f"<code>{label}</code>"
+
+
+def source_excerpt(scan_root: Path, item: dict, before: int = 2, after: int = 8) -> str:
+    rel = item.get("path", "")
+    line_no = max(1, int(item.get("line", 1)))
+    lines = read_lines(scan_root, rel)
+    if not lines:
+        return '<pre class="source-snippet"><code>源码片段不可用</code></pre>'
+    start = max(1, line_no - before)
+    end = min(len(lines), line_no + after)
+    rows = []
+    for number in range(start, end + 1):
+        marker = ">" if number == line_no else " "
+        rows.append(f"{marker} {number:>4} | {lines[number - 1]}")
+    return f'<pre class="source-snippet"><code>{h(chr(10).join(rows))}</code></pre>'
+
+
+def profile_primary_file(profile: dict) -> str:
+    files = profile.get("files", [])
+    if files:
+        return files[0]
+    symbols = profile.get("symbols", [])
+    return symbols[0].get("path", "") if symbols else ""
+
+
+def profile_symbol_names(profile: dict, limit: int = 8) -> list[str]:
+    names = []
+    for item in sorted(profile.get("symbols", []), key=symbol_rank_key):
+        name = item.get("name", "")
+        if name:
+            names.append(name)
+    return unique(names)[:limit]
+
+
+def render_chip_list(items: list[str], empty: str = "无") -> str:
+    if not items:
+        return f'<span class="mini-chip muted-chip">{h(empty)}</span>'
+    return "".join(f'<span class="mini-chip">{h(compact(item, 38))}</span>' for item in items)
 
 
 def render_list(items: list[str], empty: str = "未发现") -> str:
@@ -763,6 +823,116 @@ def symbol_effect_hint(item: dict) -> str:
     return "静态未见 I/O 关键词，优先按局部转换阅读"
 
 
+CALL_EXCLUDE = {
+    "bool",
+    "dict",
+    "float",
+    "int",
+    "len",
+    "list",
+    "max",
+    "min",
+    "open",
+    "print",
+    "range",
+    "set",
+    "str",
+    "sum",
+    "super",
+    "tuple",
+}
+
+
+def symbol_type_tag(item: dict, profile: dict) -> str:
+    name = item.get("name", "")
+    lower = name.lower()
+    path = item.get("path", "").lower()
+    kind = item.get("kind", "symbol")
+    if "scripts/" in profile.get("module", ""):
+        return script_role_from_names([Path(path).stem, name])
+    if kind == "class":
+        if any(mark in lower for mark in ["record", "sample", "input", "output", "state", "result", "config", "schema"]):
+            return "契约/状态"
+        if any(mark in lower for mark in ["pipeline", "runner", "engine", "manager"]):
+            return "流程对象"
+        if any(mark in lower for mark in ["dataset", "loader"]):
+            return "数据集合"
+        if any(mark in lower for mark in ["model", "net", "module", "layer"]):
+            return "模型结构"
+        return "类边界"
+    if lower in {"main", "run", "execute"} or lower.startswith("run_"):
+        return "入口/任务"
+    if any(mark in lower for mark in ["parse_arg", "cli", "command", "option"]):
+        return "命令参数"
+    if any(mark in lower for mark in ["route", "dispatch", "request", "response", "view"]):
+        return "接口分发"
+    if any(mark in lower for mark in ["load", "read", "fetch", "parse"]):
+        return "读取解析"
+    if any(mark in lower for mark in ["save", "write", "export", "render"]):
+        return "输出生成"
+    if any(mark in lower for mark in ["metric", "eval", "score", "loss"]):
+        return "评估度量"
+    if any(mark in lower for mark in ["flow", "warp", "splat", "dibr", "depth", "disp", "disparity"]):
+        return "几何/转换"
+    if any(mark in lower for mark in ["build", "make", "create", "factory"]):
+        return "对象构造"
+    return "局部逻辑"
+
+
+def symbol_source_clues(scan_root: Path, item: dict, window: int = 60) -> dict[str, list[str]]:
+    rel = item.get("path", "")
+    line_no = max(1, int(item.get("line", 1)))
+    lines = read_lines(scan_root, rel)
+    snippet = "\n".join(lines[line_no - 1 : line_no - 1 + window]) if lines else ""
+    if not snippet:
+        return {"methods": [], "fields": [], "calls": [], "signals": []}
+
+    methods = unique(re.findall(r"^\s+(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(", snippet, flags=re.MULTILINE))[:5]
+    fields = unique(re.findall(r"\bself\.([A-Za-z_]\w*)\b", snippet))[:6]
+    calls = []
+    for name in re.findall(r"\b([A-Za-z_]\w*)\s*\(", snippet):
+        if name not in CALL_EXCLUDE and name != item.get("name"):
+            calls.append(name)
+    calls = unique(calls)[:6]
+
+    signals = []
+    signal_patterns = [
+        ("return", r"\breturn\b"),
+        ("yield", r"\byield\b"),
+        ("raise", r"\braise\b"),
+        ("await", r"\bawait\b"),
+        ("write", r"\b(write|save|dump|export)\b"),
+        ("read", r"\b(read|load|fetch|open)\b"),
+        ("state", r"\b(self\.|global\s+|nonlocal\s+)"),
+    ]
+    for label, pattern in signal_patterns:
+        if re.search(pattern, snippet):
+            signals.append(label)
+    return {"methods": methods, "fields": fields, "calls": calls, "signals": signals}
+
+
+def render_fact_pill(label: str, value: str) -> str:
+    return f'<span class="dossier-chip"><b>{h(label)}</b>{h(value)}</span>'
+
+
+def render_symbol_dossier(item: dict, profile: dict, scan_root: Path) -> str:
+    name = item.get("name", UNKNOWN)
+    location = f"{item.get('path', '')}:{item.get('line', 1)}"
+    clues = symbol_source_clues(scan_root, item)
+    clue_text = ", ".join(clues["signals"] + clues["methods"][:2] + clues["fields"][:2] + clues["calls"][:2])
+    if not clue_text:
+        clue_text = "只见定义行"
+    chips = [
+        ("对象", f"{item.get('kind', 'symbol')} {name}"),
+        ("模块", profile.get("module", UNKNOWN)),
+        ("文件", Path(item.get("path", "")).name or UNKNOWN),
+        ("定位", location),
+        ("类型线索", symbol_type_tag(item, profile)),
+        ("源码线索", compact(clue_text, 96)),
+    ]
+    return f'<div class="symbol-purpose">{"".join(render_fact_pill(label, value) for label, value in chips)}</div>'
+
+
 def symbol_rank_key(item: dict) -> tuple:
     name = item.get("name", "")
     lower = name.lower()
@@ -784,22 +954,26 @@ def symbol_rank_key(item: dict) -> tuple:
     return (surface, private, role, path, int(item.get("line", 0)), name)
 
 
-def render_symbol_facts(item: dict, profile: dict) -> str:
+def render_symbol_facts(item: dict, profile: dict, scan_root: Path) -> str:
     depends = [dep for dep in profile.get("depends_on", []) if dep != "external"]
     upstream = ", ".join(profile.get("depended_by", [])[:3]) or "未发现模块级上游 import"
     downstream = ", ".join(depends[:3]) or "无明显模块级下游 import"
-    facts = [
-        ("对象职责", object_role_hint(item, profile)),
-        ("签名边界", symbol_signature(item)),
-        ("输入", signature_inputs(item)),
-        ("输出", signature_output(item)),
-        ("调用证据", f"上游 {upstream} / 下游 {downstream}"),
-        ("副作用", symbol_effect_hint(item)),
+    chips = [
+        ("参数", signature_inputs(item)),
+        ("返回", signature_output(item)),
+        ("上游模块", upstream),
+        ("下游模块", downstream),
+        ("静态副作用线索", symbol_effect_hint(item)),
     ]
-    return "".join(
-        f"<span><b>{h(label)}</b>{h(value)}</span>"
-        for label, value in facts
+    chip_html = "".join(
+        f'<span class="fact-chip"><b>{h(label)}</b>{h(value)}</span>'
+        for label, value in chips
     )
+    return f"""
+      {render_symbol_dossier(item, profile, scan_root)}
+      <div class="func-facts">{chip_html}</div>
+      {source_excerpt(scan_root, item)}
+    """
 
 
 def script_symbol_role_hint(item: dict) -> str:
@@ -919,6 +1093,91 @@ def render_project_table(report: dict, project_hint: str, primary: str, profiles
     return f"<table class=\"fact-table\"><tbody>{body}</tbody></table>"
 
 
+def manifest_snapshot(report: dict, scan_root: Path) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for rel in report.get("manifests", [])[:8]:
+        path = scan_root / rel
+        name = Path(rel).name
+        if name == "package.json":
+            try:
+                data = json.loads(read_text_file(path))
+            except json.JSONDecodeError:
+                data = {}
+            scripts = ", ".join(list((data.get("scripts") or {}).keys())[:6])
+            deps = ", ".join(list((data.get("dependencies") or {}).keys())[:6])
+            detail = " / ".join(part for part in [data.get("name", ""), compact(data.get("description", ""), 90), f"scripts: {scripts}" if scripts else "", f"deps: {deps}" if deps else ""] if part)
+            rows.append((rel, "package", detail or "JSON manifest"))
+        elif name == "pyproject.toml":
+            try:
+                data = tomllib.loads(read_text_file(path))
+            except tomllib.TOMLDecodeError:
+                data = {}
+            project = data.get("project") or {}
+            poetry = ((data.get("tool") or {}).get("poetry") or {})
+            name_value = project.get("name") or poetry.get("name") or ""
+            desc = project.get("description") or poetry.get("description") or ""
+            deps = project.get("dependencies") or []
+            if isinstance(deps, list):
+                dep_text = ", ".join(str(item).split(" ", 1)[0] for item in deps[:5])
+            else:
+                dep_text = ""
+            detail = " / ".join(part for part in [name_value, compact(desc, 90), f"deps: {dep_text}" if dep_text else ""] if part)
+            rows.append((rel, "pyproject", detail or "Python project manifest"))
+        else:
+            rows.append((rel, "manifest", name))
+    return rows
+
+
+def render_manifest_snapshot(report: dict, scan_root: Path, linkable: bool) -> str:
+    rows = manifest_snapshot(report, scan_root)
+    if not rows:
+        return '<p class="muted">没有发现可解析的 manifest。</p>'
+    body = []
+    for rel, kind, detail in rows:
+        body.append(
+            f"""
+            <tr>
+              <td>{path_link(rel, scan_root, linkable)}</td>
+              <td>{h(kind)}</td>
+              <td>{h(detail)}</td>
+            </tr>
+            """
+        )
+    return f"""
+    <table class="fact-table">
+      <thead><tr><th>文件</th><th>类型</th><th>直接证据</th></tr></thead>
+      <tbody>{''.join(body)}</tbody>
+    </table>
+    """
+
+
+def render_source_atlas(profiles: list[dict], scan_root: Path, linkable: bool) -> str:
+    cards = []
+    for profile in representative_profiles(profiles, limit=8):
+        files = profile.get("files", [])[:5]
+        symbols = profile_symbol_names(profile, 7)
+        depends = [item for item in profile.get("depends_on", []) if item != "external"][:6]
+        depended_by = profile.get("depended_by", [])[:6]
+        primary = profile_primary_file(profile)
+        cards.append(
+            f"""
+            <article class="atlas-card">
+              <header>
+                <h3>{h(profile['module'])}</h3>
+                <span>{h(len(profile.get('files', [])))} files · {h(len(profile.get('symbols', [])))} symbols</span>
+              </header>
+              <p class="atlas-role">{h(role_for_module(profile['module'], profile))}</p>
+              <div class="atlas-field"><b>先看</b>{path_link(primary or UNKNOWN, scan_root, linkable)}</div>
+              <div class="atlas-field"><b>文件</b>{render_chip_list(files, '无文件样本')}</div>
+              <div class="atlas-field"><b>对象</b>{render_chip_list(symbols, '无符号样本')}</div>
+              <div class="atlas-field"><b>依赖</b>{render_chip_list(depends, '无内部下游')}</div>
+              <div class="atlas-field"><b>被用</b>{render_chip_list(depended_by, '未见内部上游')}</div>
+            </article>
+            """
+        )
+    return "\n".join(cards) or '<p class="muted">没有足够的源码模块证据。</p>'
+
+
 def render_layer_diagram(profiles: list[dict], report: dict) -> str:
     def pick(predicate, fallback: str) -> str:
         names = [profile["module"] for profile in profiles if predicate(profile["module"].lower())]
@@ -1021,7 +1280,7 @@ def render_function_groups(profiles: list[dict], scan_root: Path, linkable: bool
                 <article class="func-card" data-symbol-text="{h(search_text).lower()}">
                   <div class="sig">{h(symbol_signature(item))}</div>
                   <div class="meta"><span>{h(badge)}</span>{path_link(f"{item['path']}:{item['line']}", scan_root, linkable)}</div>
-                  <div class="func-facts">{render_symbol_facts(item, profile)}</div>
+                  {render_symbol_facts(item, profile, scan_root)}
                 </article>
                 """
             )
@@ -1100,12 +1359,13 @@ def render_golden_path(route: list[dict], report: dict) -> str:
     steps = []
     labels = ["入口装配", "核心编排", "核心对象", "边界适配", "验证/配置"]
     for idx, item in enumerate(route[:5]):
+        path_name = Path(item["path"]).name or item["path"]
         steps.append(
             f"""
             <div class="timeline-item">
               <h3>{idx + 1}. {h(labels[idx] if idx < len(labels) else '下一层')}</h3>
               <p>{code(item['path'])}</p>
-              <small>{h(item['purpose'])}</small>
+              <small>{h(path_name)} · {h(item['evidence'])}</small>
             </div>
             """
         )
@@ -1133,8 +1393,8 @@ def build_risks(report: dict, profiles: list[dict]) -> list[dict]:
                 {
                     "level": "P1",
                     "kind": f"{profile['module']} 耦合偏高",
-                    "text": f"该模块同时依赖 {len(profile['depends_on'])} 个模块，并被 {len(profile['depended_by'])} 个模块依赖。",
-                    "fix": "在全量符号索引中定位该模块入口和契约对象，先判断它是编排层还是领域层。"
+                    "text": f"{profile['module']} 同时依赖 {len(profile['depends_on'])} 个模块，并被 {len(profile['depended_by'])} 个模块依赖。",
+                    "fix": f"先在全量符号索引中过滤 {profile['module']}，定位入口函数、契约对象和最外层调用者。"
                 }
             )
     return risks[:8]
@@ -2055,6 +2315,69 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 16px;
     }}
+    .atlas-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }}
+    .atlas-card {{
+      padding: 16px;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255,250,240,.96), rgba(247,243,234,.92)),
+        var(--panel);
+      box-shadow: 4px 4px 0 rgba(17,17,17,.08);
+    }}
+    .atlas-card header {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .atlas-card h3 {{
+      color: var(--blue);
+      font-size: 19px;
+    }}
+    .atlas-card header span {{
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }}
+    .atlas-role {{
+      margin: 0 0 12px;
+      color: var(--ink);
+      font-weight: 700;
+    }}
+    .atlas-field {{
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      margin: 8px 0;
+      font-size: 13px;
+    }}
+    .atlas-field b {{
+      color: var(--amber);
+    }}
+    .mini-chip {{
+      display: inline-block;
+      max-width: 100%;
+      margin: 0 5px 5px 0;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.55);
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }}
+    .muted-chip {{
+      color: var(--muted);
+    }}
     .reading-ladder {{
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
@@ -2217,10 +2540,33 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       padding: 2px 7px;
       border-radius: 999px;
       border: 1px solid currentColor;
-      border-radius: 999px;
       background: var(--panel);
       color: var(--blue);
       font-weight: 800;
+    }}
+    .symbol-purpose {{
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }}
+    .dossier-chip {{
+      min-height: 46px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--amber);
+      border-radius: 6px;
+      background: rgba(255, 245, 223, .66);
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }}
+    .dossier-chip b {{
+      display: block;
+      margin-bottom: 3px;
+      color: var(--amber);
+      font-size: 11px;
     }}
     .func-facts {{
       display: grid;
@@ -2243,6 +2589,26 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       margin-bottom: 3px;
       color: var(--amber);
       font-size: 11px;
+    }}
+    .source-snippet {{
+      margin: 10px 0 0;
+      padding: 12px;
+      border: 1px solid rgba(17,17,17,.24);
+      border-radius: 6px;
+      background: #171713;
+      color: #f7ecd9;
+      overflow-x: auto;
+      font: 12px/1.5 "Cascadia Mono", Consolas, monospace;
+    }}
+    .source-snippet code {{
+      display: block;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      white-space: pre;
     }}
     .inventory-wrap {{
       max-height: 640px;
@@ -2585,6 +2951,51 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       background: transparent;
       touch-action: none;
     }}
+    .selection-copy {{
+      position: absolute;
+      left: 12px;
+      top: -38px;
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(23, 23, 23, .22);
+      border-radius: 10px;
+      background:
+        linear-gradient(145deg, rgba(255,250,240,.58), rgba(236,228,213,.26));
+      color: var(--note-ink);
+      -webkit-backdrop-filter: blur(7px) saturate(1.16);
+      backdrop-filter: blur(7px) saturate(1.16);
+      box-shadow:
+        5px 5px 12px rgba(94, 73, 44, .13),
+        -5px -5px 12px rgba(255, 250, 240, .46),
+        inset 0 0 0 1px rgba(255,255,255,.28);
+      cursor: pointer;
+      font: 800 12px/1 "Aptos", "Microsoft YaHei", sans-serif;
+    }}
+    .selection-copy::before {{
+      content: "";
+      position: absolute;
+      width: 12px;
+      height: 14px;
+      left: 9px;
+      top: 8px;
+      border: 2px solid currentColor;
+      border-radius: 2px;
+    }}
+    .selection-copy::after {{
+      content: "";
+      position: absolute;
+      width: 12px;
+      height: 14px;
+      left: 13px;
+      top: 12px;
+      border: 2px solid currentColor;
+      border-radius: 2px;
+      background: rgba(255,255,255,.18);
+    }}
+    .selection-copy.is-copied {{
+      color: var(--green);
+      transform: translateY(-1px);
+    }}
     .inline-note-pad input {{
       display: block;
       min-height: 56px;
@@ -2717,7 +3128,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       font-size: 14px;
     }}
     @media (max-width: 1100px) {{
-      body > header, .metrics, .parse-grid, .two-col, .next-grid, .reader-notes-grid, .reading-ladder {{ grid-template-columns: 1fr; }}
+      body > header, .metrics, .parse-grid, .two-col, .next-grid, .reader-notes-grid, .reading-ladder, .atlas-grid {{ grid-template-columns: 1fr; }}
       .ladder-arrow {{ display: none; }}
       body > header {{ min-height: unset; }}
       .note-export {{ grid-column: auto; }}
@@ -2727,6 +3138,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       main {{ padding: 36px 18px 56px; }}
       .map-board {{ min-height: unset; }}
       .hero-actions {{ flex-direction: column; align-items: stretch; }}
+      .symbol-purpose {{ grid-template-columns: 1fr; }}
       .func-facts {{ grid-template-columns: 1fr; }}
     }}
     @media print {{
@@ -2752,10 +3164,11 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       </div>
       <nav class="report-nav">
         <a href="#project">项目识别</a>
+        <a href="#source-atlas">源码地图</a>
         <a href="#coverage">解析覆盖</a>
-        <a href="#layers">L3 全局分层</a>
-        <a href="#modules">L2 模块关系</a>
-        <a href="#functions">L1 函数地图</a>
+        <a href="#layers">L3 系统层</a>
+        <a href="#modules">L2 模块边</a>
+        <a href="#functions">L1 对象证据</a>
         <a href="#inventory">全量符号索引</a>
         <a href="#golden">Golden Path</a>
         <a href="#contracts">配置与契约</a>
@@ -2810,7 +3223,18 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
           <h2>项目识别卡</h2>
           <span class="tag">先把系统身份定下来</span>
         </header>
-        {render_project_table(report, project_hint, primary, profiles)}
+        <div class="two-col">
+          <div>{render_project_table(report, project_hint, primary, profiles)}</div>
+          <div>{render_manifest_snapshot(report, scan_root, linkable)}</div>
+        </div>
+      </section>
+
+      <section id="source-atlas">
+        <header>
+          <h2>源码地图</h2>
+          <span class="tag">模块 / 文件 / 对象 / 依赖</span>
+        </header>
+        <div class="atlas-grid">{render_source_atlas(profiles, scan_root, linkable)}</div>
       </section>
 
       <section id="coverage">
@@ -2823,8 +3247,8 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
       <section id="layers">
         <header>
-          <h2>L3 全局分层架构</h2>
-          <span class="tag">从入口层到验证层</span>
+          <h2>L3 系统层地图</h2>
+          <span class="tag">先只看层，不读函数</span>
         </header>
         <p class="muted">读法固定为 L3 → L2 → L1：L3 是地图，只看系统层；L2 是边界，只看模块依赖；L1 是放大镜，才进入函数、类、方法。这样同一份报告可以一次读完整体，也能从任意对象跳回证据位置。</p>
         {render_reading_ladder(report)}
@@ -2833,16 +3257,16 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
       <section id="modules">
         <header>
-          <h2>L2 模块关系图</h2>
-          <span class="tag">静态依赖 + 模块边界</span>
+          <h2>L2 模块边界地图</h2>
+          <span class="tag">再看依赖边和被依赖边</span>
         </header>
         {render_module_table(profiles)}
       </section>
 
       <section id="functions">
         <header>
-          <h2>L1 逐函数地图</h2>
-          <span class="tag">代表对象用于快速定位</span>
+          <h2>L1 对象证据档案</h2>
+          <span class="tag">最后进入函数、类、方法</span>
         </header>
         <p class="muted">这里保留每个核心模块的代表对象，避免把同类职责重复解释成大段文字；完整函数、类、方法清单在下一节全量索引中交叉引用。</p>
         <div class="toolbar">
@@ -3440,6 +3864,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       }});
       let lastPointerDragAt = 0;
       function beginDrag(event, pointerId = null) {{
+        if (event.target?.closest?.('button, input, textarea, select')) return;
         if (typeof event.button === 'number' && event.button !== 0) return;
         dragState = {{
           element,
@@ -3599,8 +4024,20 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       editor.dataset.noteId = note.id;
       editor.dataset.hostId = hostId;
       editor.innerHTML = `
+        ${{note.quote ? '<button class="selection-copy" type="button" aria-label="复制选中文字"></button>' : ''}}
         <input aria-label="阅读笔记">
       `;
+      const copyButton = editor.querySelector('.selection-copy');
+      if (copyButton) {{
+        copyButton.addEventListener('click', (event) => {{
+          event.preventDefault();
+          event.stopPropagation();
+          copyButton.classList.add('is-copied');
+          copyButton.dataset.copied = 'true';
+          writeClipboard(note.quote || '');
+          window.setTimeout(() => copyButton.classList.remove('is-copied'), 600);
+        }});
+      }}
       const input = editor.querySelector('input');
       input.value = note.text || '';
       input.addEventListener('input', () => {{
@@ -3651,12 +4088,28 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     loadNotes();
     renderNotes();
     noteExportMode?.addEventListener('change', renderNotes);
+    noteLayer?.addEventListener('click', (event) => {{
+      const button = event.target?.closest?.('.selection-copy');
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const editor = button.closest('.inline-note-pad');
+      const note = noteById(editor?.dataset.noteId || '');
+      button.classList.add('is-copied');
+      button.dataset.copied = 'true';
+      writeClipboard(note?.quote || '');
+      window.setTimeout(() => button.classList.remove('is-copied'), 600);
+    }});
     window.addEventListener('resize', placeAllLayerItems);
     window.addEventListener('scroll', placeAllLayerItems, {{ passive: true }});
     document.addEventListener('toggle', () => window.requestAnimationFrame(placeAllLayerItems), true);
 
     const noteIgnoreSelector = '[data-no-note], .report-nav, .hero-actions, button, input, textarea, select, summary';
     let selectionNoteOpenedAt = 0;
+    let selectionQueueTimer = 0;
+    let pointerSelecting = false;
+    let pointerSelectingAt = 0;
+    let lastSelectionKey = '';
 
     function elementForNode(node) {{
       if (!node) return null;
@@ -3674,15 +4127,32 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
       if (!rects.length) return false;
       const editor = activeNoteHost ? layerEditorForHost(activeNoteHost) : null;
       if (editor && sourceEvent?.target && editor.contains(sourceEvent.target)) return false;
+      const host = noteHost(range.commonAncestorContainer);
+      const hostId = ensureHostId(host);
+      const selectionKey = hostId + '|' + quote;
+      if (selectionKey === lastSelectionKey && Date.now() - selectionNoteOpenedAt < 1200) return false;
       if (activeNoteHost) finishInlineNote(activeNoteHost);
       suppressDocumentClick(520);
       selectionNoteOpenedAt = Date.now();
+      lastSelectionKey = selectionKey;
       openInlineNote({{
         quote,
         range,
         node: range.commonAncestorContainer
       }});
       return true;
+    }}
+
+    function queueSelectionNote(sourceEvent = null, delay = 90) {{
+      window.clearTimeout(selectionQueueTimer);
+      selectionQueueTimer = window.setTimeout(() => {{
+        if (pointerSelecting && Date.now() - pointerSelectingAt < 900) {{
+          queueSelectionNote(sourceEvent, 120);
+          return;
+        }}
+        pointerSelecting = false;
+        openNoteFromSelection(sourceEvent);
+      }}, delay);
     }}
 
     function runAction(action) {{
@@ -3729,6 +4199,7 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
     }}
 
     function handleDocumentClick(event) {{
+      if (eventClosest(event, '#noteLayer')) return;
       if (suppressNextDocumentClick || Date.now() < suppressDocumentClickUntil) {{
         suppressNextDocumentClick = false;
         window.clearTimeout(suppressDocumentClickTimer);
@@ -3760,10 +4231,41 @@ def render_full_html(report: dict, scan_root: Path, title: str, subtitle: str | 
 
     function handleDocumentMouseUp(event) {{
       if (eventClosest(event, '[data-action]') || eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
-      window.setTimeout(() => openNoteFromSelection(event), 0);
+      pointerSelecting = false;
+      queueSelectionNote(event, 80);
     }}
 
+    document.addEventListener('mousedown', (event) => {{
+      if (!eventClosest(event, noteIgnoreSelector) && !eventClosest(event, '#noteLayer')) {{
+        pointerSelecting = true;
+        pointerSelectingAt = Date.now();
+      }}
+    }}, true);
+    document.addEventListener('pointerdown', (event) => {{
+      if (!eventClosest(event, noteIgnoreSelector) && !eventClosest(event, '#noteLayer')) {{
+        pointerSelecting = true;
+        pointerSelectingAt = Date.now();
+      }}
+    }}, true);
+    document.addEventListener('pointerup', (event) => {{
+      pointerSelecting = false;
+      if (!eventClosest(event, '[data-action]') && !eventClosest(event, noteIgnoreSelector) && !event.defaultPrevented) {{
+        queueSelectionNote(event, 80);
+      }}
+    }}, true);
+    document.addEventListener('selectionchange', () => {{
+      if (document.activeElement?.matches?.('input, textarea, select')) return;
+      queueSelectionNote(null, pointerSelecting ? 260 : 120);
+    }});
+    document.addEventListener('keyup', (event) => {{
+      if (eventClosest(event, noteIgnoreSelector) || event.defaultPrevented) return;
+      queueSelectionNote(event, 80);
+    }}, true);
     document.addEventListener('mouseup', handleDocumentMouseUp, true);
+    window.addEventListener('mouseup', handleDocumentMouseUp, true);
+    window.addEventListener('pointercancel', () => {{
+      pointerSelecting = false;
+    }}, true);
     document.addEventListener('click', handleDocumentClick, true);
     document.addEventListener('dblclick', handleDocumentDoubleClick, true);
   </script>

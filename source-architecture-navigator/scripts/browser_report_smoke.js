@@ -118,6 +118,37 @@ async function waitForReady(cdp) {
 
 function pageSmoke() {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  function duplicateTextAudit() {
+    const selectors = [
+      ".symbol-purpose",
+      ".atlas-role",
+      ".issue p",
+      ".issue small",
+      ".timeline-item small",
+      ".route-panel span",
+      ".parse-cell p",
+      ".question span",
+    ];
+    const texts = Array.from(document.querySelectorAll(selectors.join(",")))
+      .map((node) => (node.textContent || "").replace(/\s+/g, " ").trim())
+      .filter((text) => text.length >= 18)
+      .map((text) => text
+        .replace(/[A-Za-z]:[\\/][^\s]+/g, "<path>")
+        .toLowerCase());
+    const counts = new Map();
+    for (const text of texts) counts.set(text, (counts.get(text) || 0) + 1);
+    const repeated = Array.from(counts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([text, count]) => ({ count, text: text.slice(0, 180) }))
+      .sort((a, b) => b.count - a.count);
+    const duplicateItems = repeated.reduce((sum, item) => sum + item.count - 1, 0);
+    return {
+      total: texts.length,
+      duplicateItems,
+      ratio: texts.length ? duplicateItems / texts.length : 0,
+      repeated: repeated.slice(0, 5),
+    };
+  }
   function fireMouse(type, el, detail = 1) {
     const rect = el.getBoundingClientRect();
     el.dispatchEvent(new MouseEvent(type, {
@@ -169,7 +200,7 @@ function pageSmoke() {
     await sleep(80);
     summary.sourceExport = (document.querySelector("#notesExport")?.value || "").trim();
 
-    const selectionTarget = document.querySelector(".func-facts span") || document.querySelector(".func-card .sig");
+    const selectionTarget = document.querySelector(".source-snippet code") || document.querySelector(".func-facts span") || document.querySelector(".func-card .sig");
     if (selectionTarget) {
       selectionTarget.scrollIntoView({ block: "center" });
       await sleep(80);
@@ -185,8 +216,12 @@ function pageSmoke() {
         sel.removeAllRanges();
         sel.addRange(range);
         fireMouse("mouseup", selectionTarget, 1);
-        await sleep(180);
+        await sleep(420);
         summary.selectionEditors = document.querySelectorAll(".inline-note-pad").length;
+        const copyButton = document.querySelector(".selection-copy");
+        summary.selectionCopyButton = Boolean(copyButton);
+        copyButton?.click();
+        summary.selectionCopyClicked = copyButton?.dataset?.copied === "true" || copyButton?.classList?.contains("is-copied") || false;
         const selectionInput = document.querySelector(".inline-note-pad input");
         if (selectionInput) {
           selectionInput.value = "selection smoke note";
@@ -218,6 +253,7 @@ function pageSmoke() {
     summary.filteredCountText = document.querySelector("#symbolCount")?.textContent || "";
     summary.noOldExportLabels = !document.body.innerText.includes("按照顺序") && !document.body.innerText.includes("记录：");
     summary.noVisibleNoteHint = !document.body.innerText.includes("双击正文 + 选中文句");
+    summary.duplicateAudit = duplicateTextAudit();
     return summary;
   })();
 }
@@ -302,11 +338,15 @@ function assertSmoke(summary, reloadSummary, dragSummary) {
   if (!summary.orderedExport.startsWith("1. browser smoke note")) failures.push("ordered export format is wrong");
   if (!summary.sourceExport.includes("原文：") || !summary.sourceExport.includes("\n笔记：browser smoke note")) failures.push("source export format is wrong");
   if (summary.selectionEditors !== 1 || !summary.selectionSaved) failures.push("text selection did not open and save a note");
+  if (!summary.selectionCopyButton || !summary.selectionCopyClicked) failures.push("selection copy control did not appear or respond");
   if (!dragSummary.dragPersisted) failures.push("drag offset was not persisted");
   if (summary.symbolRows > 0 && !summary.filterQuery) failures.push("symbol filter had no generic query candidate");
   if (summary.filterQuery && (summary.filteredRows < 1 || !summary.filteredCountText.includes(`/ ${summary.symbolRows}`))) failures.push("symbol filter did not operate on full inventory");
   if (!summary.noOldExportLabels) failures.push("old export labels are still visible");
   if (!summary.noVisibleNoteHint) failures.push("visible note hint text is still present");
+  if (summary.duplicateAudit?.total >= 20 && summary.duplicateAudit.ratio >= 0.01) {
+    failures.push(`explanatory text duplicate ratio is ${(summary.duplicateAudit.ratio * 100).toFixed(2)}%, expected < 1%`);
+  }
   if (reloadSummary.savedViewsAfterReload < 1 || !reloadSummary.exportAfterReload.includes("browser smoke note")) failures.push("note did not survive reload");
   if (failures.length) {
     const error = new Error(
